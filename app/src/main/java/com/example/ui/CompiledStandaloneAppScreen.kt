@@ -31,10 +31,13 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -46,6 +49,7 @@ import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
@@ -77,6 +81,7 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.example.data.CanvasComponentEntity
 import com.example.data.StudioProjectEntity
 import com.example.engine.LocalConfigStateWriter
+import com.example.engine.ShizukuPrivilegeBridge
 import com.example.service.DynamicOverlayRegistry
 import com.example.service.FloatingDashboardService
 import java.io.File
@@ -91,10 +96,16 @@ fun CompiledStandaloneAppScreen(
     isOverlayRunning: Boolean = false,
     hasStoragePermission: Boolean = false,
     hasOverlayPermission: Boolean = false,
+    shizukuStatusSummary: String = "",
+    isShizukuReady: Boolean = false,
+    isShizukuRunning: Boolean = false,
+    isShizukuInstalled: Boolean = false,
     statusMessage: String = "",
     onStartOverlay: () -> Unit = {},
     onStopOverlay: () -> Unit = {},
     onRefreshPermissions: () -> Unit = {},
+    onRequestOrLaunchShizuku: () -> Unit = {},
+    onTestAllTargetPaths: () -> Unit = {},
     onTriggerComponentLive: (CanvasComponentEntity, String?) -> Unit = { _, _ -> },
     onBackToStudioEditor: (() -> Unit)? = null
 ) {
@@ -395,10 +406,96 @@ fun CompiledStandaloneAppScreen(
                                 }
                             }
                         }
+
+                        // 3. Shizuku Privilege (Android 15 Restricted Path Fix) Row
+                        val effectiveShizukuReady = isShizukuReady || ShizukuPrivilegeBridge.isShizukuReady()
+                        val effectiveShizukuRunning = isShizukuRunning || ShizukuPrivilegeBridge.isShizukuRunning()
+                        val effectiveShizukuSummary = shizukuStatusSummary.ifBlank {
+                            ShizukuPrivilegeBridge.getStatusSummary(context)
+                        }
+                        Surface(
+                            shape = RoundedCornerShape(12.dp),
+                            color = if (effectiveShizukuReady) Color(0xFF0D2824)
+                            else if (effectiveShizukuRunning) Color(0xFF291D0B)
+                            else Color(0xFF1E293B),
+                            border = BorderStroke(
+                                1.dp,
+                                if (effectiveShizukuReady) Color(0xFF10B981)
+                                else if (effectiveShizukuRunning) Color(0xFFF59E0B)
+                                else Color(0xFF8B5CF6)
+                            ),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable {
+                                    onRequestOrLaunchShizuku()
+                                    ShizukuPrivilegeBridge.probeShizukuBinder(context)
+                                    if (!ShizukuPrivilegeBridge.isShizukuReady()) {
+                                        if (ShizukuPrivilegeBridge.isShizukuRunning()) {
+                                            ShizukuPrivilegeBridge.requestPermission(1401)
+                                        } else {
+                                            ShizukuPrivilegeBridge.openOrDownloadShizukuApp(context)
+                                        }
+                                    }
+                                    onRefreshPermissions()
+                                }
+                                .testTag("standalone_shizuku_permission_button")
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 14.dp, vertical = 12.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                    modifier = Modifier.weight(1f)
+                                ) {
+                                    Icon(
+                                        imageVector = if (effectiveShizukuReady) Icons.Default.CheckCircle else Icons.Default.Security,
+                                        contentDescription = "Shizuku Android 15 Restricted Path Fix",
+                                        tint = if (effectiveShizukuReady) Color(0xFF10B981)
+                                        else if (effectiveShizukuRunning) Color(0xFFF59E0B)
+                                        else Color(0xFFA78BFA),
+                                        modifier = Modifier.size(20.dp)
+                                    )
+                                    Column {
+                                        Text(
+                                            text = "Shizuku (Android 15 Restricted Path Fix)",
+                                            color = Color.White,
+                                            fontSize = 13.sp,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                        Text(
+                                            text = "$effectiveShizukuSummary • Fixes Android/data & obb access",
+                                            color = Color(0xFF94A3B8),
+                                            fontSize = 11.sp
+                                        )
+                                    }
+                                }
+                                Surface(
+                                    shape = RoundedCornerShape(8.dp),
+                                    color = if (effectiveShizukuReady) Color(0xFF10B981)
+                                    else if (effectiveShizukuRunning) Color(0xFFD97706)
+                                    else Color(0xFF7C3AED)
+                                ) {
+                                    Text(
+                                        text = if (effectiveShizukuReady) "READY ✓"
+                                        else if (effectiveShizukuRunning) "AUTHORIZE"
+                                        else "SHIZUKU",
+                                        color = Color.White,
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.ExtraBold,
+                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
+                                    )
+                                }
+                            }
+                        }
                     }
                 }
 
-                // ONLY 2 BUTTONS: START & STOP
+                // START / STOP & TARGET PATH FILE-CHANGE TEST
                 Card(
                     shape = RoundedCornerShape(18.dp),
                     colors = CardDefaults.cardColors(containerColor = Color(0xFF151F34)),
@@ -418,7 +515,7 @@ fun CompiledStandaloneAppScreen(
                             // START BUTTON
                             Button(
                                 onClick = {
-                                    if (!hasStoragePermission) {
+                                    if (!hasStoragePermission && !ShizukuPrivilegeBridge.isShizukuReady()) {
                                         requestStorageAction()
                                     } else if (!hasOverlayPermission) {
                                         requestFloatPermissionAction()
@@ -476,6 +573,32 @@ fun CompiledStandaloneAppScreen(
                                     fontWeight = FontWeight.ExtraBold
                                 )
                             }
+                        }
+
+                        OutlinedButton(
+                            onClick = {
+                                onTestAllTargetPaths()
+                            },
+                            border = BorderStroke(1.dp, Color(0xFF38BDF8)),
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(46.dp)
+                                .testTag("standalone_test_target_path_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Security,
+                                contentDescription = "Test Target Path File Change",
+                                tint = Color(0xFF38BDF8),
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(Modifier.width(8.dp))
+                            Text(
+                                text = "TEST TARGET PATH FILE CHANGE (DIRECT / SHIZUKU)",
+                                color = Color(0xFFE0F2FE),
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.ExtraBold
+                            )
                         }
 
                         if (statusMessage.isNotBlank()) {
@@ -891,8 +1014,272 @@ fun CompiledStandaloneAppScreen(
         isOverlayRunning = isOverlayRunning,
         hasStoragePermission = LocalConfigStateWriter.hasStoragePermissionGranted(context),
         hasOverlayPermission = android.provider.Settings.canDrawOverlays(context),
+        shizukuStatusSummary = ShizukuPrivilegeBridge.getStatusSummary(context),
+        isShizukuReady = ShizukuPrivilegeBridge.isShizukuReady(),
+        isShizukuRunning = ShizukuPrivilegeBridge.isShizukuRunning(),
+        isShizukuInstalled = ShizukuPrivilegeBridge.isShizukuInstalled(context),
         statusMessage = statusMessage,
         onStartOverlay = onStartOverlay,
         onStopOverlay = onStopOverlay
+    )
+}
+
+@Composable
+fun TargetWriteErrorShizukuDialog(
+    report: LocalConfigStateWriter.WriteDiagnosticReport,
+    shizukuStatusSummary: String,
+    isShizukuReady: Boolean,
+    isShizukuRunning: Boolean,
+    onDismiss: () -> Unit,
+    onConnectOrAuthorizeShizuku: () -> Unit,
+    onOpenShizukuApp: () -> Unit,
+    onRetryWrite: () -> Unit
+) {
+    val context = LocalContext.current
+    val isRestricted = report.isRestrictedAndroidPath
+    val headerTitle = if (isRestricted) {
+        "Android 15 Restricted Path — Use Shizuku"
+    } else {
+        report.whyFailedTitle.ifBlank { "Target Path File Change Failed" }
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = Color(0xFF0E1528),
+        titleContentColor = Color.White,
+        textContentColor = Color(0xFFE2E8F0),
+        title = {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(34.dp)
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(
+                            if (isRestricted) Color(0xFF7C3AED) else Color(0xFFEF4444)
+                        ),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = if (isRestricted) Icons.Default.Security else Icons.Default.ErrorOutline,
+                        contentDescription = null,
+                        tint = Color.White,
+                        modifier = Modifier.size(20.dp)
+                    )
+                }
+                Column {
+                    Text(
+                        text = headerTitle,
+                        fontWeight = FontWeight.ExtraBold,
+                        fontSize = 15.sp,
+                        color = Color.White
+                    )
+                    Text(
+                        text = "Widget: ${report.componentLabel} • Type: ${report.failureCategory}",
+                        fontSize = 11.sp,
+                        color = Color(0xFF94A3B8)
+                    )
+                }
+            }
+        },
+        text = {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                // Target Path Box
+                Surface(
+                    shape = RoundedCornerShape(10.dp),
+                    color = Color(0xFF080F1E),
+                    border = BorderStroke(1.dp, Color(0xFF1E293B)),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(modifier = Modifier.padding(10.dp)) {
+                        Text(
+                            text = "TARGET PATH",
+                            color = Color(0xFF38BDF8),
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.ExtraBold
+                        )
+                        Spacer(Modifier.height(2.dp))
+                        Text(
+                            text = report.targetFilePath,
+                            color = Color.White,
+                            fontSize = 11.sp,
+                            fontFamily = FontFamily.Monospace
+                        )
+                    }
+                }
+
+                // Exact Failure Cause Box
+                Surface(
+                    shape = RoundedCornerShape(10.dp),
+                    color = Color(0xFF28111B),
+                    border = BorderStroke(1.dp, Color(0xFFEF4444)),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(modifier = Modifier.padding(10.dp)) {
+                        Text(
+                            text = "WHY FILE CHANGE FAILED (AKHIR KYU FAIL HUA)",
+                            color = Color(0xFFFCA5A5),
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.ExtraBold
+                        )
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            text = report.whyFailedTitle,
+                            color = Color.White,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 12.sp
+                        )
+                        Spacer(Modifier.height(2.dp))
+                        Text(
+                            text = report.whyFailedDetail,
+                            color = Color(0xFFFEE2E2),
+                            fontSize = 11.5.sp
+                        )
+                        if (report.rawKernelError.isNotBlank()) {
+                            Spacer(Modifier.height(4.dp))
+                            Text(
+                                text = "OS Detail: ${report.rawKernelError}",
+                                color = Color(0xFFF87171),
+                                fontSize = 10.sp,
+                                fontFamily = FontFamily.Monospace
+                            )
+                        }
+                    }
+                }
+
+                // Shizuku Fix Guidance Box
+                Surface(
+                    shape = RoundedCornerShape(10.dp),
+                    color = Color(0xFF171332),
+                    border = BorderStroke(1.dp, Color(0xFF8B5CF6)),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(modifier = Modifier.padding(10.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "HOW TO FIX WITH SHIZUKU (STUDIO & APK)",
+                                color = Color(0xFFC4B5FD),
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.ExtraBold
+                            )
+                            Surface(
+                                shape = RoundedCornerShape(6.dp),
+                                color = if (isShizukuReady) Color(0xFF065F46) else Color(0xFF312E81)
+                            ) {
+                                Text(
+                                    text = shizukuStatusSummary,
+                                    color = if (isShizukuReady) Color(0xFF6EE7B7) else Color(0xFFE0E7FF),
+                                    fontSize = 9.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                )
+                            }
+                        }
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            text = if (isRestricted) {
+                                "Android 13 / 14 / 15 blocks direct app writes to /Android/data and /Android/obb even with All Files Access. Use Shizuku (ADB UID 2000 / Root) to solve this restricted path problem in both Studio Error and the compiled standalone APK:\n1. Open Shizuku app & start service (Wireless Debugging or Root).\n2. Tap the purple button below to allow Shizuku permission.\n3. Tap 'Retry File Change Test' to apply changes to the restricted path."
+                            } else {
+                                "Grant All Files Access permission or connect Shizuku to modify this target path with elevated shell privileges in both Studio Error and the compiled APK."
+                            },
+                            color = Color(0xFFEDE9FE),
+                            fontSize = 11.sp
+                        )
+                    }
+                }
+
+                // Action Buttons inside dialog for immediate resolution
+                Button(
+                    onClick = onConnectOrAuthorizeShizuku,
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Color(0xFF7C3AED),
+                        contentColor = Color.White
+                    ),
+                    shape = RoundedCornerShape(10.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("error_dialog_shizuku_fix_button")
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Security,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(Modifier.width(6.dp))
+                    Text(
+                        text = when {
+                            isShizukuReady -> "Apply via Shizuku Shell Now"
+                            isShizukuRunning -> "Allow Shizuku Permission & Fix"
+                            else -> "Connect / Start Shizuku for Restricted Path"
+                        },
+                        fontWeight = FontWeight.ExtraBold,
+                        fontSize = 12.sp
+                    )
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    OutlinedButton(
+                        onClick = onOpenShizukuApp,
+                        border = BorderStroke(1.dp, Color(0xFF6366F1)),
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Text(
+                            text = "Open Shizuku App",
+                            color = Color(0xFFC7D2FE),
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+
+                    if (!LocalConfigStateWriter.hasStoragePermissionGranted(context)) {
+                        OutlinedButton(
+                            onClick = {
+                                LocalConfigStateWriter.requestStoragePermission(context)
+                            },
+                            border = BorderStroke(1.dp, Color(0xFF38BDF8)),
+                            shape = RoundedCornerShape(10.dp),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text(
+                                text = "Allow Storage",
+                                color = Color(0xFFBAE6FD),
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = onRetryWrite,
+                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF10B981)),
+                shape = RoundedCornerShape(8.dp),
+                modifier = Modifier.testTag("error_dialog_retry_write_button")
+            ) {
+                Text("Retry File Change Test", color = Color.White, fontWeight = FontWeight.Bold)
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Close", color = Color(0xFF94A3B8))
+            }
+        }
     )
 }

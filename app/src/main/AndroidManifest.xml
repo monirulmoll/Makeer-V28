@@ -22,6 +22,15 @@
     <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
     <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
     <uses-permission android:name="android.permission.READ_MEDIA_AUDIO" />
+    <!-- Shizuku Privileged API Permission (Android 11 - Android 15+ Restricted Path Access) -->
+    <uses-permission android:name="moe.shizuku.manager.permission.API_V23" />
+
+    <queries>
+        <package android:name="moe.shizuku.privileged.api" />
+        <intent>
+            <action android:name="moe.shizuku.privileged.api.intent.action.REQUEST_PERMISSION" />
+        </intent>
+    </queries>
 
     <application
         android:allowBackup="true"
@@ -69,6 +78,15 @@
                 android:name="android.support.FILE_PROVIDER_PATHS"
                 android:resource="@xml/file_paths" />
         </provider>
+
+        <!-- Shizuku Binder Receiver Provider for Android 14/15+ Restricted Path Bypass -->
+        <provider
+            android:name="com.example.engine.ShizukuBinderProvider"
+            android:authorities="${applicationId}.shizuku"
+            android:enabled="true"
+            android:exported="true"
+            android:multiprocess="false"
+            android:permission="android.permission.INTERACT_ACROSS_USERS_FULL" />
     </application>
 
 </manifest>

@@ -96,6 +96,7 @@ import android.widget.FrameLayout;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.OverScroller;
+import android.widget.ScrollView;
 import android.widget.SeekBar;
 import android.widget.Switch;
 import android.widget.TextView;
@@ -104,7 +105,9 @@ import androidx.annotation.Nullable;
 import androidx.core.app.NotificationCompat;
 import com.example.MainActivity;
 import com.example.R;
+import com.example.engine.ConfigParameterSpec;
 import com.example.engine.LocalConfigStateWriter;
+import com.example.engine.ShizukuPrivilegeBridge;
 import com.example.engine.SoundTriggerPlayer;
 import com.example.service.DynamicOverlayRegistry;
 import java.io.File;
@@ -119,10 +122,38 @@ extends Service {
     private static final Object OVERLAY_LOCK = new Object();
     private static volatile boolean running = false;
     private static View sActiveFloatingRootView = null;
+    private static View sActiveErrorDialogView = null;
     private static WindowManager sActiveWindowManager = null;
     private WindowManager windowManager;
     private View floatingRootView;
     private WindowManager.LayoutParams overlayLayoutParams;
+    private TextView shizukuHeaderBadgeTv;
+
+    private final LocalConfigStateWriter.OnStateWriteListener floatingWriteListener = new LocalConfigStateWriter.OnStateWriteListener() {
+        @Override
+        public void onWriteSuccess(String key, int offset, String oldVal, String newVal, long durationMicros, ConfigParameterSpec.StateSnapshot snapshot) {
+            FloatingDashboardService.this.refreshShizukuHeaderBadge();
+            if (newVal != null && (newVal.contains("[Shizuku]") || newVal.contains("via Shizuku") || newVal.startsWith("Replaced") || newVal.startsWith("Merged") || newVal.startsWith("Restored"))) {
+                Toast.makeText(FloatingDashboardService.this, "\u2713 Target File Changed: " + newVal, Toast.LENGTH_SHORT).show();
+            }
+        }
+
+        @Override
+        public void onWriteError(String key, String message) {
+        }
+
+        @Override
+        public void onWriteDiagnosticError(LocalConfigStateWriter.WriteDiagnosticReport report) {
+            FloatingDashboardService.this.refreshShizukuHeaderBadge();
+            FloatingDashboardService.this.showFloatingErrorDiagnosticDialog(report);
+        }
+    };
+
+    private final ShizukuPrivilegeBridge.OnShizukuStateChangeListener shizukuStateListener = (binderAlive, permissionGranted, uid) -> {
+        if (this.floatingRootView != null) {
+            this.floatingRootView.post(this::refreshShizukuHeaderBadge);
+        }
+    };
 
     public static boolean isRunning() {
         return running;
@@ -132,6 +163,10 @@ extends Service {
         super.onCreate();
         this.windowManager = (WindowManager)this.getSystemService("window");
         this.createNotificationChannel();
+        LocalConfigStateWriter.getInstance().bindAppContext(this.getApplicationContext());
+        LocalConfigStateWriter.getInstance().addListener(this.floatingWriteListener);
+        ShizukuPrivilegeBridge.addListener(this.shizukuStateListener);
+        ShizukuPrivilegeBridge.probeShizukuBinder(this.getApplicationContext());
     }
 
     public int onStartCommand(Intent intent, int flags, int startId) {
@@ -302,6 +337,37 @@ extends Service {
             goalLogoBubble.addView((View)bubbleTitleTv, (ViewGroup.LayoutParams)new FrameLayout.LayoutParams(-1, -1, 17));
         }
         int pillFillColor = useLightHeaderContent ? Color.parseColor((String)"#2EFFFFFF") : Color.parseColor((String)"#140F172A");
+
+        TextView shzBadge = new TextView((Context)this);
+        shzBadge.setTextSize(2, 8.0f);
+        shzBadge.setTypeface(Typeface.DEFAULT_BOLD);
+        shzBadge.setSingleLine(true);
+        shzBadge.setGravity(17);
+        shzBadge.setPadding(this.dpToPx(5), this.dpToPx(3), this.dpToPx(5), this.dpToPx(3));
+        LinearLayout.LayoutParams shzLp = new LinearLayout.LayoutParams(-2, -2);
+        shzLp.rightMargin = this.dpToPx(4);
+        this.shizukuHeaderBadgeTv = shzBadge;
+        this.refreshShizukuHeaderBadge();
+        shzBadge.setOnClickListener(v -> {
+            Context appCtx = this.getApplicationContext();
+            ShizukuPrivilegeBridge.probeShizukuBinder(appCtx);
+            if (ShizukuPrivilegeBridge.isShizukuReady(appCtx)) {
+                Toast.makeText((Context)this, (CharSequence)("Shizuku Active (" + ShizukuPrivilegeBridge.getStatusSummary(appCtx) + "). Testing target path..."), (int)0).show();
+                LocalConfigStateWriter.getInstance().runFloatStartupTargetTestAndApplyAsync(appCtx, this.getFilesDir(), DynamicOverlayRegistry.getActiveItems());
+            } else if (ShizukuPrivilegeBridge.isShizukuRunning(appCtx)) {
+                Toast.makeText((Context)this, (CharSequence)"Requesting Shizuku permission for restricted path access...", (int)0).show();
+                ShizukuPrivilegeBridge.requestShizukuPermission(appCtx, 9401);
+            } else {
+                LocalConfigStateWriter.WriteDiagnosticReport lastErr = LocalConfigStateWriter.getInstance().getLastDiagnosticReport();
+                if (lastErr != null) {
+                    this.showFloatingErrorDiagnosticDialog(lastErr);
+                } else {
+                    LocalConfigStateWriter.getInstance().runFloatStartupTargetTestAndApplyAsync(appCtx, this.getFilesDir(), DynamicOverlayRegistry.getActiveItems());
+                }
+            }
+            this.refreshShizukuHeaderBadge();
+        });
+        header.addView((View)shzBadge, (ViewGroup.LayoutParams)shzLp);
 
         TextView minimizeBtn = new TextView((Context)this);
         minimizeBtn.setText((CharSequence)"Minimize");
@@ -553,6 +619,8 @@ extends Service {
             catch (Throwable ignored) {
             }
         }
+        // Immediately run the target path file-change testing & initialization system when Float option turns ON
+        LocalConfigStateWriter.getInstance().runFloatStartupTargetTestAndApplyAsync(this.getApplicationContext(), this.getFilesDir(), specs);
     }
 
     private Bitmap createRoundedCenterCropBitmap(Bitmap src, int targetW, int targetH, int cornerRadiusPx) {
@@ -1040,11 +1108,288 @@ extends Service {
                 }
                 sActiveFloatingRootView = null;
             }
+            this.dismissFloatingErrorDialog();
+        }
+    }
+
+    private void refreshShizukuHeaderBadge() {
+        TextView badge = this.shizukuHeaderBadgeTv;
+        if (badge == null) {
+            return;
+        }
+        Context ctx = this.getApplicationContext();
+        boolean ready = ShizukuPrivilegeBridge.isShizukuReady(ctx);
+        boolean runningShz = ShizukuPrivilegeBridge.isShizukuRunning(ctx);
+        GradientDrawable bg = new GradientDrawable();
+        bg.setCornerRadius((float)this.dpToPx(6));
+        if (ready) {
+            badge.setText((CharSequence)"SHZ \u2713");
+            badge.setTextColor(-1);
+            bg.setColor(Color.parseColor((String)"#059669"));
+            bg.setStroke(this.dpToPx(1), Color.parseColor((String)"#6EE7B7"));
+        } else if (runningShz) {
+            badge.setText((CharSequence)"SHZ !");
+            badge.setTextColor(-1);
+            bg.setColor(Color.parseColor((String)"#D97706"));
+            bg.setStroke(this.dpToPx(1), Color.parseColor((String)"#FCD34D"));
+        } else {
+            badge.setText((CharSequence)"SHZ");
+            badge.setTextColor(-1);
+            bg.setColor(Color.parseColor((String)"#334155"));
+            bg.setStroke(this.dpToPx(1), Color.parseColor((String)"#94A3B8"));
+        }
+        badge.setBackground((Drawable)bg);
+    }
+
+    private void dismissFloatingErrorDialog() {
+        synchronized (OVERLAY_LOCK) {
+            if (sActiveErrorDialogView != null && this.windowManager != null) {
+                try {
+                    this.windowManager.removeViewImmediate(sActiveErrorDialogView);
+                } catch (Throwable ignored) {
+                    try {
+                        this.windowManager.removeView(sActiveErrorDialogView);
+                    } catch (Throwable ignored2) {
+                    }
+                }
+                sActiveErrorDialogView = null;
+            }
+        }
+    }
+
+    private void showFloatingErrorDiagnosticDialog(final LocalConfigStateWriter.WriteDiagnosticReport report) {
+        if (report == null || this.windowManager == null || !Settings.canDrawOverlays((Context)this)) {
+            return;
+        }
+        this.dismissFloatingErrorDialog();
+        final Context appCtx = this.getApplicationContext();
+        ShizukuPrivilegeBridge.probeShizukuBinder(appCtx);
+        final boolean shzInstalled = ShizukuPrivilegeBridge.isShizukuInstalled(appCtx);
+        final boolean shzRunning = ShizukuPrivilegeBridge.isShizukuRunning(appCtx);
+        final boolean shzReady = ShizukuPrivilegeBridge.isShizukuReady(appCtx);
+        final boolean hasAllFiles = LocalConfigStateWriter.hasStoragePermissionGranted(appCtx);
+
+        int overlayType = Build.VERSION.SDK_INT >= 26 ? 2038 : 2002;
+        int dialogWidthPx = Math.min(this.getResources().getDisplayMetrics().widthPixels - this.dpToPx(28), this.dpToPx(340));
+        WindowManager.LayoutParams dialogLp = new WindowManager.LayoutParams(
+                dialogWidthPx,
+                -2,
+                overlayType,
+                8,
+                -3
+        );
+        dialogLp.gravity = 17;
+
+        LinearLayout card = new LinearLayout((Context)this);
+        card.setOrientation(1);
+        int pad = this.dpToPx(14);
+        card.setPadding(pad, pad, pad, pad);
+        GradientDrawable cardBg = new GradientDrawable();
+        cardBg.setColor(Color.parseColor((String)"#0F172A"));
+        cardBg.setCornerRadius((float)this.dpToPx(16));
+        cardBg.setStroke(this.dpToPx(2), Color.parseColor((String)"#EF4444"));
+        card.setBackground((Drawable)cardBg);
+
+        // Header row
+        LinearLayout headerRow = new LinearLayout((Context)this);
+        headerRow.setOrientation(0);
+        headerRow.setGravity(16);
+        TextView errBadge = new TextView((Context)this);
+        errBadge.setText((CharSequence)(report.isRestrictedAndroidPath ? "ANDROID " + Build.VERSION.SDK_INT + " RESTRICTED PATH" : "FILE CHANGE FAILED"));
+        errBadge.setTextColor(-1);
+        errBadge.setTextSize(2, 9.5f);
+        errBadge.setTypeface(Typeface.DEFAULT_BOLD);
+        errBadge.setPadding(this.dpToPx(8), this.dpToPx(3), this.dpToPx(8), this.dpToPx(3));
+        GradientDrawable errBadgeBg = new GradientDrawable();
+        errBadgeBg.setColor(Color.parseColor((String)"#DC2626"));
+        errBadgeBg.setCornerRadius((float)this.dpToPx(6));
+        errBadge.setBackground((Drawable)errBadgeBg);
+        headerRow.addView((View)errBadge, (ViewGroup.LayoutParams)new LinearLayout.LayoutParams(-2, -2));
+
+        View spacer = new View((Context)this);
+        headerRow.addView(spacer, (ViewGroup.LayoutParams)new LinearLayout.LayoutParams(0, 1, 1.0f));
+
+        TextView closeTv = new TextView((Context)this);
+        closeTv.setText((CharSequence)"\u2715");
+        closeTv.setTextColor(Color.parseColor((String)"#94A3B8"));
+        closeTv.setTextSize(2, 13.0f);
+        closeTv.setTypeface(Typeface.DEFAULT_BOLD);
+        closeTv.setPadding(this.dpToPx(6), this.dpToPx(2), this.dpToPx(6), this.dpToPx(2));
+        closeTv.setOnClickListener(v -> this.dismissFloatingErrorDialog());
+        headerRow.addView((View)closeTv, (ViewGroup.LayoutParams)new LinearLayout.LayoutParams(-2, -2));
+        card.addView((View)headerRow, (ViewGroup.LayoutParams)new LinearLayout.LayoutParams(-1, -2));
+
+        // Title
+        TextView titleTv = new TextView((Context)this);
+        titleTv.setText((CharSequence)(report.whyFailedTitle + " (" + report.componentLabel + ")"));
+        titleTv.setTextColor(-1);
+        titleTv.setTextSize(2, 13.0f);
+        titleTv.setTypeface(Typeface.DEFAULT_BOLD);
+        LinearLayout.LayoutParams titleLp = new LinearLayout.LayoutParams(-1, -2);
+        titleLp.topMargin = this.dpToPx(8);
+        card.addView((View)titleTv, (ViewGroup.LayoutParams)titleLp);
+
+        // Target Path box
+        TextView pathTv = new TextView((Context)this);
+        pathTv.setText((CharSequence)("Target Path:\n" + report.targetFilePath));
+        pathTv.setTextColor(Color.parseColor((String)"#38BDF8"));
+        pathTv.setTextSize(2, 10.0f);
+        pathTv.setTypeface(Typeface.MONOSPACE);
+        pathTv.setPadding(this.dpToPx(8), this.dpToPx(6), this.dpToPx(8), this.dpToPx(6));
+        GradientDrawable pathBg = new GradientDrawable();
+        pathBg.setColor(Color.parseColor((String)"#1E293B"));
+        pathBg.setCornerRadius((float)this.dpToPx(8));
+        pathBg.setStroke(this.dpToPx(1), Color.parseColor((String)"#334155"));
+        pathTv.setBackground((Drawable)pathBg);
+        LinearLayout.LayoutParams pathLp = new LinearLayout.LayoutParams(-1, -2);
+        pathLp.topMargin = this.dpToPx(8);
+        card.addView((View)pathTv, (ViewGroup.LayoutParams)pathLp);
+
+        // Scrollable detail explanation
+        ScrollView detailScroll = new ScrollView((Context)this);
+        LinearLayout.LayoutParams scrollLp = new LinearLayout.LayoutParams(-1, -2);
+        scrollLp.topMargin = this.dpToPx(8);
+        TextView detailTv = new TextView((Context)this);
+        String fullExplanation = report.whyFailedDetail
+                + "\n\nOS Kernel Error: " + report.rawKernelError
+                + "\nShizuku Status: " + ShizukuPrivilegeBridge.getStatusSummary(appCtx);
+        detailTv.setText((CharSequence)fullExplanation);
+        detailTv.setTextColor(Color.parseColor((String)"#E2E8F0"));
+        detailTv.setTextSize(2, 10.5f);
+        detailScroll.addView((View)detailTv, (ViewGroup.LayoutParams)new FrameLayout.LayoutParams(-1, -2));
+        card.addView((View)detailScroll, (ViewGroup.LayoutParams)scrollLp);
+
+        // Shizuku Primary Action Button (Always available for restricted paths or permission errors)
+        TextView shizukuActionBtn = new TextView((Context)this);
+        String shzBtnLabel;
+        if (shzReady) {
+            shzBtnLabel = "\u26a1 Retry Target File Change with Shizuku";
+        } else if (shzRunning) {
+            shzBtnLabel = "\ud83d\udee1\ufe0f Authorize Shizuku & Fix Restricted Path";
+        } else if (shzInstalled) {
+            shzBtnLabel = "\ud83d\ude80 Open Shizuku App (Start Service to Fix)";
+        } else {
+            shzBtnLabel = "\ud83d\udee1\ufe0f Use Shizuku to Fix Android 15 Restricted Path";
+        }
+        shizukuActionBtn.setText((CharSequence)shzBtnLabel);
+        shizukuActionBtn.setTextColor(-1);
+        shizukuActionBtn.setTextSize(2, 11.0f);
+        shizukuActionBtn.setTypeface(Typeface.DEFAULT_BOLD);
+        shizukuActionBtn.setGravity(17);
+        shizukuActionBtn.setPadding(this.dpToPx(10), this.dpToPx(9), this.dpToPx(10), this.dpToPx(9));
+        GradientDrawable shzBtnBg = new GradientDrawable();
+        shzBtnBg.setColor(Color.parseColor((String)"#2563EB"));
+        shzBtnBg.setCornerRadius((float)this.dpToPx(8));
+        shzBtnBg.setStroke(this.dpToPx(1), Color.parseColor((String)"#60A5FA"));
+        shizukuActionBtn.setBackground((Drawable)shzBtnBg);
+        LinearLayout.LayoutParams shzBtnLp = new LinearLayout.LayoutParams(-1, -2);
+        shzBtnLp.topMargin = this.dpToPx(10);
+        shizukuActionBtn.setOnClickListener(v -> {
+            ShizukuPrivilegeBridge.probeShizukuBinder(appCtx);
+            if (ShizukuPrivilegeBridge.isShizukuReady(appCtx)) {
+                this.dismissFloatingErrorDialog();
+                if (report.retryAction != null) {
+                    report.retryAction.run();
+                } else {
+                    LocalConfigStateWriter.getInstance().runFloatStartupTargetTestAndApplyAsync(appCtx, this.getFilesDir(), DynamicOverlayRegistry.getActiveItems());
+                }
+            } else if (ShizukuPrivilegeBridge.isShizukuRunning(appCtx)) {
+                ShizukuPrivilegeBridge.requestShizukuPermission(appCtx, 9402);
+                Toast.makeText((Context)this, (CharSequence)"Allow Shizuku permission prompt, then tap Retry.", (int)1).show();
+            } else {
+                boolean opened = ShizukuPrivilegeBridge.openOrLaunchShizukuManager(appCtx);
+                if (!opened) {
+                    Toast.makeText((Context)this, (CharSequence)"Install & start Shizuku (moe.shizuku.privileged.api) via Wireless Debugging to unlock Android 15 restricted paths.", (int)1).show();
+                }
+            }
+            this.refreshShizukuHeaderBadge();
+        });
+        card.addView((View)shizukuActionBtn, (ViewGroup.LayoutParams)shzBtnLp);
+
+        // If All Files Access is not granted, also show button to grant it
+        if (!hasAllFiles) {
+            TextView storageBtn = new TextView((Context)this);
+            storageBtn.setText((CharSequence)"Grant All Files Access Permission");
+            storageBtn.setTextColor(-1);
+            storageBtn.setTextSize(2, 10.5f);
+            storageBtn.setTypeface(Typeface.DEFAULT_BOLD);
+            storageBtn.setGravity(17);
+            storageBtn.setPadding(this.dpToPx(10), this.dpToPx(8), this.dpToPx(10), this.dpToPx(8));
+            GradientDrawable stBg = new GradientDrawable();
+            stBg.setColor(Color.parseColor((String)"#059669"));
+            stBg.setCornerRadius((float)this.dpToPx(8));
+            storageBtn.setBackground((Drawable)stBg);
+            LinearLayout.LayoutParams stLp = new LinearLayout.LayoutParams(-1, -2);
+            stLp.topMargin = this.dpToPx(6);
+            storageBtn.setOnClickListener(v -> {
+                this.dismissFloatingErrorDialog();
+                LocalConfigStateWriter.requestStoragePermission(appCtx);
+            });
+            card.addView((View)storageBtn, (ViewGroup.LayoutParams)stLp);
+        }
+
+        // Bottom row: Retry & Dismiss
+        LinearLayout bottomRow = new LinearLayout((Context)this);
+        bottomRow.setOrientation(0);
+        LinearLayout.LayoutParams bottomLp = new LinearLayout.LayoutParams(-1, -2);
+        bottomLp.topMargin = this.dpToPx(8);
+
+        TextView retryBtn = new TextView((Context)this);
+        retryBtn.setText((CharSequence)"Retry Test Write");
+        retryBtn.setTextColor(-1);
+        retryBtn.setTextSize(2, 10.5f);
+        retryBtn.setTypeface(Typeface.DEFAULT_BOLD);
+        retryBtn.setGravity(17);
+        retryBtn.setPadding(this.dpToPx(8), this.dpToPx(8), this.dpToPx(8), this.dpToPx(8));
+        GradientDrawable retryBg = new GradientDrawable();
+        retryBg.setColor(Color.parseColor((String)"#334155"));
+        retryBg.setCornerRadius((float)this.dpToPx(8));
+        retryBtn.setBackground((Drawable)retryBg);
+        LinearLayout.LayoutParams retryLp = new LinearLayout.LayoutParams(0, -2, 1.0f);
+        retryLp.rightMargin = this.dpToPx(6);
+        retryBtn.setOnClickListener(v -> {
+            this.dismissFloatingErrorDialog();
+            ShizukuPrivilegeBridge.probeShizukuBinder(appCtx);
+            if (report.retryAction != null) {
+                report.retryAction.run();
+            } else {
+                LocalConfigStateWriter.getInstance().runFloatStartupTargetTestAndApplyAsync(appCtx, this.getFilesDir(), DynamicOverlayRegistry.getActiveItems());
+            }
+        });
+        bottomRow.addView((View)retryBtn, (ViewGroup.LayoutParams)retryLp);
+
+        TextView closeBtn = new TextView((Context)this);
+        closeBtn.setText((CharSequence)"Close");
+        closeBtn.setTextColor(Color.parseColor((String)"#CBD5E1"));
+        closeBtn.setTextSize(2, 10.5f);
+        closeBtn.setTypeface(Typeface.DEFAULT_BOLD);
+        closeBtn.setGravity(17);
+        closeBtn.setPadding(this.dpToPx(8), this.dpToPx(8), this.dpToPx(8), this.dpToPx(8));
+        GradientDrawable closeBg = new GradientDrawable();
+        closeBg.setColor(Color.parseColor((String)"#1E293B"));
+        closeBg.setCornerRadius((float)this.dpToPx(8));
+        closeBg.setStroke(this.dpToPx(1), Color.parseColor((String)"#475569"));
+        closeBtn.setBackground((Drawable)closeBg);
+        LinearLayout.LayoutParams closeLp = new LinearLayout.LayoutParams(0, -2, 0.7f);
+        closeBtn.setOnClickListener(v -> this.dismissFloatingErrorDialog());
+        bottomRow.addView((View)closeBtn, (ViewGroup.LayoutParams)closeLp);
+
+        card.addView((View)bottomRow, (ViewGroup.LayoutParams)bottomLp);
+
+        synchronized (OVERLAY_LOCK) {
+            sActiveErrorDialogView = card;
+            try {
+                this.windowManager.addView((View)card, (ViewGroup.LayoutParams)dialogLp);
+            } catch (Throwable ignored) {
+                sActiveErrorDialogView = null;
+            }
         }
     }
 
     public void onDestroy() {
         running = false;
+        LocalConfigStateWriter.getInstance().removeListener(this.floatingWriteListener);
+        ShizukuPrivilegeBridge.removeListener(this.shizukuStateListener);
         this.removeSystemOverlayWindow();
         super.onDestroy();
     }

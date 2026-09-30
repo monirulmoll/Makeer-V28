@@ -35,6 +35,7 @@ import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Token
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -64,6 +65,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.data.CanvasComponentEntity
+import com.example.engine.ShizukuPrivilegeBridge
 import java.io.File
 import java.io.FileOutputStream
 import java.util.Locale
@@ -657,6 +659,128 @@ fun ComponentPropertyInspectorSheet(
                                         tint = Color.White,
                                         modifier = Modifier.size(20.dp)
                                     )
+                                }
+                            }
+
+                            val isRestrictedAndroidPath = remember(targetFile) {
+                                ShizukuPrivilegeBridge.isRestrictedAndroidPath(targetFile)
+                            }
+                            val shizukuReady = ShizukuPrivilegeBridge.isShizukuReady()
+                            val shizukuStatusText = ShizukuPrivilegeBridge.getStatusSummary(context)
+
+                            Surface(
+                                shape = RoundedCornerShape(10.dp),
+                                color = if (isRestrictedAndroidPath && !shizukuReady) Color(0xFF1F1235) else Color(0xFF09152B),
+                                border = BorderStroke(
+                                    1.dp,
+                                    if (isRestrictedAndroidPath && !shizukuReady) Color(0xFF8B5CF6) else Color(0xFF1E3A5F)
+                                ),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(10.dp),
+                                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                            modifier = Modifier.weight(1f)
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.Security,
+                                                contentDescription = null,
+                                                tint = if (shizukuReady) Color(0xFF10B981) else Color(0xFFA78BFA),
+                                                modifier = Modifier.size(15.dp)
+                                            )
+                                            Text(
+                                                text = if (isRestrictedAndroidPath) {
+                                                    "Android 15 Restricted Path (Android/data or obb)"
+                                                } else {
+                                                    "Target Path Testing & Shizuku Engine"
+                                                },
+                                                color = Color.White,
+                                                fontSize = 10.5.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                        }
+                                        Text(
+                                            text = shizukuStatusText,
+                                            color = if (shizukuReady) Color(0xFF34D399) else Color(0xFFC4B5FD),
+                                            fontSize = 9.5.sp,
+                                            fontWeight = FontWeight.ExtraBold
+                                        )
+                                    }
+
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                    ) {
+                                        Surface(
+                                            shape = RoundedCornerShape(8.dp),
+                                            color = Color(0xFF0EA5E9).copy(alpha = 0.2f),
+                                            border = BorderStroke(1.dp, Color(0xFF38BDF8)),
+                                            modifier = Modifier
+                                                .weight(1f)
+                                                .height(32.dp)
+                                                .clickable {
+                                                    val updated = buildUpdated()
+                                                    onSaveComponent(updated)
+                                                    onTriggerLive(updated, updated.currentValue.ifBlank { "1" })
+                                                }
+                                                .testTag("inspector_test_target_write_button")
+                                        ) {
+                                            Box(contentAlignment = Alignment.Center) {
+                                                Text(
+                                                    text = "Test Target File Change",
+                                                    color = Color(0xFFE0F2FE),
+                                                    fontSize = 10.sp,
+                                                    fontWeight = FontWeight.Bold
+                                                )
+                                            }
+                                        }
+
+                                        Surface(
+                                            shape = RoundedCornerShape(8.dp),
+                                            color = Color(0xFF7C3AED).copy(alpha = 0.28f),
+                                            border = BorderStroke(1.dp, Color(0xFFA78BFA)),
+                                            modifier = Modifier
+                                                .weight(1f)
+                                                .height(32.dp)
+                                                .clickable {
+                                                    ShizukuPrivilegeBridge.probeShizukuBinder(context)
+                                                    if (!ShizukuPrivilegeBridge.isShizukuReady()) {
+                                                        if (ShizukuPrivilegeBridge.isShizukuRunning()) {
+                                                            ShizukuPrivilegeBridge.requestPermission(1401)
+                                                        } else {
+                                                            ShizukuPrivilegeBridge.openOrDownloadShizukuApp(context)
+                                                        }
+                                                    } else {
+                                                        val updated = buildUpdated()
+                                                        onSaveComponent(updated)
+                                                        onTriggerLive(updated, updated.currentValue.ifBlank { "1" })
+                                                    }
+                                                }
+                                                .testTag("inspector_shizuku_fix_button")
+                                        ) {
+                                            Box(contentAlignment = Alignment.Center) {
+                                                Text(
+                                                    text = if (shizukuReady) "Shizuku Ready ✓" else "Use Shizuku Fix",
+                                                    color = Color(0xFFEDE9FE),
+                                                    fontSize = 10.sp,
+                                                    fontWeight = FontWeight.Bold
+                                                )
+                                            }
+                                        }
+                                    }
                                 }
                             }
                         }

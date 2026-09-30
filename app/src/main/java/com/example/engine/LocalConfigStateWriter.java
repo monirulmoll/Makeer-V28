@@ -1,18 +1,3 @@
-/*
- * Decompiled with CFR 0.152.
- * 
- * Could not load the following classes:
- *  android.app.AppOpsManager
- *  android.content.Context
- *  android.content.Intent
- *  android.net.Uri
- *  android.os.Build$VERSION
- *  android.os.Environment
- *  android.os.Handler
- *  android.os.Looper
- *  android.os.Process
- *  androidx.core.content.ContextCompat
- */
 package com.example.engine;
 
 import android.app.AppOpsManager;
@@ -25,10 +10,10 @@ import android.os.Handler;
 import android.os.Looper;
 import android.os.Process;
 import androidx.core.content.ContextCompat;
-import com.example.engine.ConfigParameterSpec;
 import com.example.service.DynamicOverlayRegistry;
 import java.io.BufferedReader;
 import java.io.BufferedWriter;
+import java.io.ByteArrayOutputStream;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileOutputStream;
@@ -41,9 +26,11 @@ import java.io.RandomAccessFile;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ExecutorService;
@@ -64,31 +51,97 @@ public class LocalConfigStateWriter {
     private final ConfigParameterSpec.StateSnapshot currentState = new ConfigParameterSpec.StateSnapshot();
     private final Map<String, String> lastWrittenByWidget = new ConcurrentHashMap<String, String>();
     private volatile File activeFile;
+    private volatile Context appContext;
+    private volatile WriteDiagnosticReport lastDiagnosticReport;
+
+    public static final class WriteDiagnosticReport {
+        public final long timestampMs;
+        public final boolean success;
+        public final String componentLabel;
+        public final String targetFilePath;
+        public final String failureCategory;
+        public final String whyFailedTitle;
+        public final String whyFailedDetail;
+        public final String rawKernelError;
+        public final boolean isRestrictedAndroidPath;
+        public final boolean requiresShizuku;
+        public final boolean hasAllFilesPermission;
+        public final boolean shizukuInstalled;
+        public final boolean shizukuRunning;
+        public final boolean shizukuAuthorized;
+        public final boolean usedShizuku;
+        public final Runnable retryAction;
+
+        public WriteDiagnosticReport(
+                boolean success,
+                String componentLabel,
+                String targetFilePath,
+                String failureCategory,
+                String whyFailedTitle,
+                String whyFailedDetail,
+                String rawKernelError,
+                boolean isRestrictedAndroidPath,
+                boolean requiresShizuku,
+                boolean hasAllFilesPermission,
+                boolean shizukuInstalled,
+                boolean shizukuRunning,
+                boolean shizukuAuthorized,
+                boolean usedShizuku,
+                Runnable retryAction
+        ) {
+            this.timestampMs = System.currentTimeMillis();
+            this.success = success;
+            this.componentLabel = componentLabel != null ? componentLabel : "Float Option";
+            this.targetFilePath = targetFilePath != null ? targetFilePath : "";
+            this.failureCategory = failureCategory != null ? failureCategory : "UNKNOWN";
+            this.whyFailedTitle = whyFailedTitle != null ? whyFailedTitle : "";
+            this.whyFailedDetail = whyFailedDetail != null ? whyFailedDetail : "";
+            this.rawKernelError = rawKernelError != null ? rawKernelError : "";
+            this.isRestrictedAndroidPath = isRestrictedAndroidPath;
+            this.requiresShizuku = requiresShizuku;
+            this.hasAllFilesPermission = hasAllFilesPermission;
+            this.shizukuInstalled = shizukuInstalled;
+            this.shizukuRunning = shizukuRunning;
+            this.shizukuAuthorized = shizukuAuthorized;
+            this.usedShizuku = usedShizuku;
+            this.retryAction = retryAction;
+        }
+    }
 
     private static Handler createSafeMainHandler() {
         try {
             Looper looper = Looper.getMainLooper();
             return looper != null ? new Handler(looper) : null;
-        }
-        catch (Throwable ignored) {
+        } catch (Throwable ignored) {
             return null;
         }
     }
 
-    /*
-     * WARNING - Removed try catching itself - possible behaviour change.
-     * Enabled force condition propagation
-     * Lifted jumps to return sites
-     */
     public static LocalConfigStateWriter getInstance() {
         if (instance != null) return instance;
-        Class<LocalConfigStateWriter> clazz = LocalConfigStateWriter.class;
         synchronized (LocalConfigStateWriter.class) {
             if (instance != null) return instance;
             instance = new LocalConfigStateWriter();
-            // ** MonitorExit[var0] (shouldn't be in output)
             return instance;
         }
+    }
+
+    public void bindAppContext(Context context) {
+        if (context != null) {
+            this.appContext = context.getApplicationContext() != null ? context.getApplicationContext() : context;
+        }
+    }
+
+    public Context getBoundAppContext() {
+        return this.appContext;
+    }
+
+    public WriteDiagnosticReport getLastDiagnosticReport() {
+        return this.lastDiagnosticReport;
+    }
+
+    public void clearLastDiagnosticReport() {
+        this.lastDiagnosticReport = null;
     }
 
     public static boolean hasStoragePermissionGranted(Context context) {
@@ -100,44 +153,34 @@ public class LocalConfigStateWriter {
                 if (Environment.isExternalStorageManager()) {
                     return true;
                 }
-            }
-            catch (Throwable throwable) {
-                // empty catch block
+            } catch (Throwable ignored) {
             }
             try {
                 int mode;
-                AppOpsManager appOps = (AppOpsManager)context.getSystemService("appops");
+                AppOpsManager appOps = (AppOpsManager) context.getSystemService("appops");
                 if (appOps != null && (mode = appOps.unsafeCheckOpNoThrow("android:manage_external_storage", Process.myUid(), context.getPackageName())) == 0) {
                     return true;
                 }
-            }
-            catch (Throwable appOps) {
-                // empty catch block
+            } catch (Throwable ignored) {
             }
             try {
                 if (Environment.isExternalStorageLegacy()) {
-                    boolean hasWrite;
-                    boolean bl = hasWrite = ContextCompat.checkSelfPermission((Context)context, (String)"android.permission.WRITE_EXTERNAL_STORAGE") == 0;
+                    boolean hasWrite = ContextCompat.checkSelfPermission(context, "android.permission.WRITE_EXTERNAL_STORAGE") == 0;
                     if (hasWrite) {
                         return true;
                     }
                 }
-            }
-            catch (Throwable hasWrite) {
-                // empty catch block
+            } catch (Throwable ignored) {
             }
             return false;
         }
         try {
-            boolean hasRead;
-            boolean hasWrite = ContextCompat.checkSelfPermission((Context)context, (String)"android.permission.WRITE_EXTERNAL_STORAGE") == 0;
-            boolean bl = hasRead = ContextCompat.checkSelfPermission((Context)context, (String)"android.permission.READ_EXTERNAL_STORAGE") == 0;
+            boolean hasWrite = ContextCompat.checkSelfPermission(context, "android.permission.WRITE_EXTERNAL_STORAGE") == 0;
+            boolean hasRead = ContextCompat.checkSelfPermission(context, "android.permission.READ_EXTERNAL_STORAGE") == 0;
             if (hasWrite && hasRead) {
                 return true;
             }
-        }
-        catch (Throwable throwable) {
-            // empty catch block
+        } catch (Throwable ignored) {
         }
         return false;
     }
@@ -148,30 +191,25 @@ public class LocalConfigStateWriter {
         }
         if (Build.VERSION.SDK_INT >= 30) {
             try {
-                Intent intent = new Intent("android.settings.MANAGE_APP_ALL_FILES_ACCESS_PERMISSION", Uri.parse((String)("package:" + context.getPackageName())));
+                Intent intent = new Intent("android.settings.MANAGE_APP_ALL_FILES_ACCESS_PERMISSION", Uri.parse("package:" + context.getPackageName()));
                 intent.addFlags(0x10000000);
                 context.startActivity(intent);
                 return;
-            }
-            catch (Throwable intent) {
+            } catch (Throwable intent) {
                 try {
                     Intent fallback = new Intent("android.settings.MANAGE_ALL_FILES_ACCESS_PERMISSION");
                     fallback.addFlags(0x10000000);
                     context.startActivity(fallback);
                     return;
-                }
-                catch (Throwable fallback) {
-                    // empty catch block
+                } catch (Throwable ignored) {
                 }
             }
         }
         try {
-            Intent appDetails = new Intent("android.settings.APPLICATION_DETAILS_SETTINGS", Uri.parse((String)("package:" + context.getPackageName())));
+            Intent appDetails = new Intent("android.settings.APPLICATION_DETAILS_SETTINGS", Uri.parse("package:" + context.getPackageName()));
             appDetails.addFlags(0x10000000);
             context.startActivity(appDetails);
-        }
-        catch (Throwable throwable) {
-            // empty catch block
+        } catch (Throwable ignored) {
         }
     }
 
@@ -180,21 +218,17 @@ public class LocalConfigStateWriter {
             return;
         }
         try {
-            Intent intent = new Intent("android.settings.action.MANAGE_OVERLAY_PERMISSION", Uri.parse((String)("package:" + context.getPackageName())));
+            Intent intent = new Intent("android.settings.action.MANAGE_OVERLAY_PERMISSION", Uri.parse("package:" + context.getPackageName()));
             intent.addFlags(0x10000000);
             context.startActivity(intent);
             return;
-        }
-        catch (Throwable intent) {
+        } catch (Throwable intent) {
             try {
                 Intent fallback = new Intent("android.settings.action.MANAGE_OVERLAY_PERMISSION");
                 fallback.addFlags(0x10000000);
                 context.startActivity(fallback);
+            } catch (Throwable ignored) {
             }
-            catch (Throwable throwable) {
-                // empty catch block
-            }
-            return;
         }
     }
 
@@ -225,6 +259,232 @@ public class LocalConfigStateWriter {
         return this.currentState.copy();
     }
 
+    /**
+     * Triggered when the Float option is turned ON (both in Studio Error and in the compiled APK).
+     * Runs the target path file-change testing & initialization system across all configured overlay widgets.
+     * - If a widget is currently ON, applies its file change to the target path immediately.
+     * - For every configured target path, verifies that the file on the target path can be modified/created
+     *   (automatically using Shizuku if the path is restricted on Android 13/14/15+).
+     * - If any target path fails to change, dispatches a full WriteDiagnosticReport to show the Error Dialog
+     *   explaining why it failed and how to fix it with Shizuku.
+     */
+    public void runFloatStartupTargetTestAndApplyAsync(
+            final Context context,
+            final File fallbackDir,
+            final List<DynamicOverlayRegistry.OverlayItemSpec> specs
+    ) {
+        if (context != null) {
+            this.bindAppContext(context);
+        }
+        this.fileIoExecutor.execute(() -> {
+            Context ctx = context != null ? context : this.appContext;
+            if (ctx != null) {
+                ShizukuPrivilegeBridge.probeShizukuBinder(ctx);
+            }
+            List<DynamicOverlayRegistry.OverlayItemSpec> items = specs != null ? specs : DynamicOverlayRegistry.getActiveItems();
+            if (items == null || items.isEmpty()) {
+                return;
+            }
+            Set<String> testedPaths = new LinkedHashSet<String>();
+            for (DynamicOverlayRegistry.OverlayItemSpec spec : items) {
+                if (spec == null || "LINK".equalsIgnoreCase(spec.type)) continue;
+                String rawTarget = spec.targetFilePath != null ? spec.targetFilePath.trim() : "";
+                if (rawTarget.isEmpty()) continue;
+
+                boolean isActive;
+                if ("SLIDER".equalsIgnoreCase(spec.type)) {
+                    int v = 0;
+                    try {
+                        v = Integer.parseInt(spec.currentValue != null ? spec.currentValue.trim() : "0");
+                    } catch (Exception ignored) {
+                    }
+                    isActive = v > 0;
+                } else {
+                    isActive = "1".equals(spec.currentValue) || "true".equalsIgnoreCase(spec.currentValue);
+                }
+
+                File resolvedTarget = this.resolveTargetFile(fallbackDir, rawTarget);
+                String absPath = resolvedTarget.getAbsolutePath();
+
+                if (isActive) {
+                    String payload = isActive ? spec.onPayloadHex : spec.offPayloadHex;
+                    this.applyWidgetPatchSync(
+                            fallbackDir,
+                            "widget_" + spec.id,
+                            spec.type,
+                            spec.targetFilePath,
+                            spec.byteOffsetHex,
+                            spec.offPayloadHex,
+                            spec.onPayloadHex,
+                            payload,
+                            true,
+                            spec.label != null ? spec.label : "Float Option",
+                            spec.customImagePath
+                    );
+                    testedPaths.add(absPath);
+                } else if (!testedPaths.contains(absPath)) {
+                    testedPaths.add(absPath);
+                    this.verifyOrTestTargetPathWritableInternal(
+                            ctx,
+                            fallbackDir,
+                            spec.label != null && !spec.label.trim().isEmpty() ? spec.label + " (Float Test)" : "Float Target Test",
+                            spec.targetFilePath,
+                            spec.byteOffsetHex,
+                            spec.offPayloadHex,
+                            spec.onPayloadHex,
+                            spec.customImagePath
+                    );
+                }
+            }
+        });
+    }
+
+    /**
+     * Explicitly tests changing/writing the target path file and triggers either success telemetry
+     * or a detailed Error Dialog report explaining why it failed and how to use Shizuku.
+     */
+    public void testTargetPathFileChangeAsync(
+            final Context context,
+            final File fallbackDir,
+            final String componentLabel,
+            final String targetFilePath,
+            final String byteOffsetHex,
+            final String originalValue,
+            final String changeValue,
+            final String customSourceFilePath
+    ) {
+        if (context != null) {
+            this.bindAppContext(context);
+        }
+        this.fileIoExecutor.execute(() -> {
+            Context ctx = context != null ? context : this.appContext;
+            if (ctx != null) {
+                ShizukuPrivilegeBridge.probeShizukuBinder(ctx);
+            }
+            this.applyWidgetPatchSync(
+                    fallbackDir,
+                    "test_" + (componentLabel != null ? componentLabel : "target"),
+                    "TOGGLE",
+                    targetFilePath,
+                    byteOffsetHex,
+                    originalValue,
+                    changeValue,
+                    changeValue != null && !changeValue.isEmpty() ? changeValue : "0x01",
+                    true,
+                    componentLabel != null ? componentLabel : "Target Path Test",
+                    customSourceFilePath
+            );
+        });
+    }
+
+    private boolean verifyOrTestTargetPathWritableInternal(
+            final Context ctx,
+            final File fallbackDir,
+            final String label,
+            final String rawTargetPath,
+            final String byteOffsetHex,
+            final String offPayloadHex,
+            final String onPayloadHex,
+            final String customSourcePath
+    ) {
+        long startNs = System.nanoTime();
+        File target = this.resolveTargetFile(fallbackDir, rawTargetPath);
+        String absPath = target.getAbsolutePath();
+        boolean isRestricted = ShizukuPrivilegeBridge.isRestrictedAndroidPath(absPath);
+        Runnable retryTask = () -> this.testTargetPathFileChangeAsync(
+                ctx, fallbackDir, label, rawTargetPath, byteOffsetHex, offPayloadHex, onPayloadHex, customSourcePath
+        );
+
+        // 1. Try direct non-destructive write check or initial state write
+        try {
+            if (!isRestricted || (target.exists() && target.canWrite())) {
+                File parent = target.getParentFile();
+                if (parent != null && !parent.exists()) {
+                    parent.mkdirs();
+                }
+                if (target.exists() && target.isFile()) {
+                    try (RandomAccessFile raf = new RandomAccessFile(target, "rw")) {
+                        long len = raf.length();
+                        if (len > 0L) {
+                            raf.seek(0L);
+                            int b = raf.read();
+                            raf.seek(0L);
+                            raf.write(b);
+                        }
+                    }
+                    long elapsedUs = (System.nanoTime() - startNs) / 1000L;
+                    this.currentState.targetFilePath = absPath;
+                    this.currentState.rawTextContent = "Verified writable (" + target.getName() + ")";
+                    ConfigParameterSpec.StateSnapshot snap = this.currentState.copy();
+                    this.notifyWriteSuccess(label, this.parseOffsetString(byteOffsetHex), "READY", "TEST_OK (" + target.getName() + ")", elapsedUs, snap);
+                    return true;
+                } else {
+                    // Target file does not exist yet: create initial test target file with OFF/default state
+                    boolean ok = this.applyWidgetPatchSync(
+                            fallbackDir,
+                            "init_" + label,
+                            "TOGGLE",
+                            rawTargetPath,
+                            byteOffsetHex,
+                            offPayloadHex,
+                            onPayloadHex,
+                            offPayloadHex != null && !offPayloadHex.isEmpty() ? offPayloadHex : "0x00",
+                            false,
+                            label,
+                            null
+                    );
+                    return ok;
+                }
+            }
+        } catch (IOException directErr) {
+            // Fall through to Shizuku check or error diagnostic below
+            if (ShizukuPrivilegeBridge.isShizukuReady(ctx)) {
+                ShizukuPrivilegeBridge.ShellExecResult shizukuRes = ShizukuPrivilegeBridge.testTargetPathWritableViaShizuku(absPath);
+                if (shizukuRes.isSuccess()) {
+                    long elapsedUs = (System.nanoTime() - startNs) / 1000L;
+                    this.currentState.targetFilePath = absPath;
+                    this.currentState.rawTextContent = "Verified via Shizuku (" + target.getName() + ")";
+                    ConfigParameterSpec.StateSnapshot snap = this.currentState.copy();
+                    this.notifyWriteSuccess(label, this.parseOffsetString(byteOffsetHex), "RESTRICTED", "SHIZUKU_OK (" + target.getName() + ")", elapsedUs, snap);
+                    return true;
+                }
+                WriteDiagnosticReport report = this.buildFailureDiagnosticReport(ctx, label, absPath, directErr.getMessage() + " | Shizuku: " + shizukuRes.getCombinedError(), retryTask);
+                this.notifyDiagnosticWriteError(report);
+                return false;
+            } else {
+                WriteDiagnosticReport report = this.buildFailureDiagnosticReport(ctx, label, absPath, directErr.getMessage(), retryTask);
+                this.notifyDiagnosticWriteError(report);
+                return false;
+            }
+        }
+
+        // If path is restricted (e.g. Android 14/15 /Android/data or /Android/obb) and direct access couldn't open it:
+        if (ShizukuPrivilegeBridge.isShizukuReady(ctx)) {
+            ShizukuPrivilegeBridge.ShellExecResult shizukuRes = ShizukuPrivilegeBridge.testTargetPathWritableViaShizuku(absPath);
+            if (shizukuRes.isSuccess()) {
+                long elapsedUs = (System.nanoTime() - startNs) / 1000L;
+                this.currentState.targetFilePath = absPath;
+                this.currentState.rawTextContent = "Verified via Shizuku (" + target.getName() + ")";
+                ConfigParameterSpec.StateSnapshot snap = this.currentState.copy();
+                this.notifyWriteSuccess(label, this.parseOffsetString(byteOffsetHex), "RESTRICTED", "SHIZUKU_OK (" + target.getName() + ")", elapsedUs, snap);
+                return true;
+            }
+            WriteDiagnosticReport report = this.buildFailureDiagnosticReport(ctx, label, absPath, shizukuRes.getCombinedError(), retryTask);
+            this.notifyDiagnosticWriteError(report);
+            return false;
+        }
+
+        WriteDiagnosticReport report = this.buildFailureDiagnosticReport(
+                ctx,
+                label,
+                absPath,
+                "open failed: EACCES (Permission denied) - Android " + Build.VERSION.SDK_INT + " Scoped Storage Restricted Path",
+                retryTask
+        );
+        this.notifyDiagnosticWriteError(report);
+        return false;
+    }
+
     public void initializeFileStateAsync(File targetFile, String operatingMode, Runnable onComplete) {
         this.bindTargetFile(targetFile, operatingMode);
         this.fileIoExecutor.execute(() -> {
@@ -234,8 +494,7 @@ public class LocalConfigStateWriter {
                 if (parent != null && !parent.exists()) {
                     parent.mkdirs();
                 }
-                LocalConfigStateWriter localConfigStateWriter = this;
-                synchronized (localConfigStateWriter) {
+                synchronized (this) {
                     this.writeFullStateToFileLocked(targetFile);
                 }
                 long elapsedUs = (System.nanoTime() - startNs) / 1000L;
@@ -248,8 +507,7 @@ public class LocalConfigStateWriter {
                         onComplete.run();
                     }
                 }
-            }
-            catch (IOException e) {
+            } catch (IOException e) {
                 this.notifyWriteError("operating_mode", e.getMessage());
             }
         });
@@ -261,8 +519,7 @@ public class LocalConfigStateWriter {
             String oldVal;
             long startNs = System.nanoTime();
             String newVal = enabled ? "1 (0x01)" : "0 (0x00)";
-            LocalConfigStateWriter localConfigStateWriter = this;
-            synchronized (localConfigStateWriter) {
+            synchronized (this) {
                 if (this.activeFile == null) {
                     this.notifyWriteError(key, "No target configuration file bound.");
                     return;
@@ -270,9 +527,8 @@ public class LocalConfigStateWriter {
                 oldVal = this.getToggleOldValueLocked(key);
                 this.applyToggleToMemoryLocked(key, enabled);
                 try {
-                    this.patchByteOffsetAndRebuildKeyValueLocked(this.activeFile, byteOffset, new byte[]{(byte)(enabled ? 1 : 0)});
-                }
-                catch (IOException e) {
+                    this.patchByteOffsetAndRebuildKeyValueLocked(this.activeFile, byteOffset, new byte[]{(byte) (enabled ? 1 : 0)});
+                } catch (IOException e) {
                     this.notifyWriteError(key, "IO Failed at offset 0x" + Integer.toHexString(byteOffset) + ": " + e.getMessage());
                     return;
                 }
@@ -289,8 +545,7 @@ public class LocalConfigStateWriter {
             String oldVal;
             long startNs = System.nanoTime();
             String newVal = String.valueOf(value);
-            LocalConfigStateWriter localConfigStateWriter = this;
-            synchronized (localConfigStateWriter) {
+            synchronized (this) {
                 if (this.activeFile == null) {
                     this.notifyWriteError(key, "No target configuration file bound.");
                     return;
@@ -300,8 +555,7 @@ public class LocalConfigStateWriter {
                 byte[] intBytes = ByteBuffer.allocate(4).putInt(value).array();
                 try {
                     this.patchByteOffsetAndRebuildKeyValueLocked(this.activeFile, byteOffset, intBytes);
-                }
-                catch (IOException e) {
+                } catch (IOException e) {
                     this.notifyWriteError(key, "IO Failed at offset 0x" + Integer.toHexString(byteOffset) + ": " + e.getMessage());
                     return;
                 }
@@ -316,17 +570,15 @@ public class LocalConfigStateWriter {
         this.fileIoExecutor.execute(() -> {
             ConfigParameterSpec.StateSnapshot snapshot;
             String oldVal;
-            String sanitized;
             long startNs = System.nanoTime();
-            String string = sanitized = rawInput == null ? "" : rawInput.trim();
+            String sanitized = rawInput == null ? "" : rawInput.trim();
             if (sanitized.isEmpty()) {
                 sanitized = "DEFAULT";
             }
             if (sanitized.length() > maxSlotLength) {
                 sanitized = sanitized.substring(0, maxSlotLength);
             }
-            LocalConfigStateWriter localConfigStateWriter = this;
-            synchronized (localConfigStateWriter) {
+            synchronized (this) {
                 if (this.activeFile == null) {
                     this.notifyWriteError(key, "No target configuration file bound.");
                     return;
@@ -343,8 +595,7 @@ public class LocalConfigStateWriter {
                 System.arraycopy(utfBytes, 0, slotBytes, 0, Math.min(utfBytes.length, maxSlotLength));
                 try {
                     this.patchByteOffsetAndRebuildKeyValueLocked(this.activeFile, byteOffset, slotBytes);
-                }
-                catch (IOException e) {
+                } catch (IOException e) {
                     this.notifyWriteError(key, "IO Failed at offset 0x" + Integer.toHexString(byteOffset) + ": " + e.getMessage());
                     return;
                 }
@@ -371,30 +622,46 @@ public class LocalConfigStateWriter {
         return this.applyWidgetPatchSync(fallbackDir, widgetKey, widgetType, targetFilePath, byteOffsetHex, originalValue, changeValue, liveValue, isActive, componentLabel, null);
     }
 
-    /*
-     * WARNING - Removed try catching itself - possible behaviour change.
-     */
-    public boolean applyWidgetPatchSync(File fallbackDir, String widgetKey, String widgetType, String targetFilePath, String byteOffsetHex, String originalValue, String changeValue, String liveValue, boolean isActive, String componentLabel, String customSourceFilePath) {
+    public boolean applyWidgetPatchSync(
+            final File fallbackDir,
+            final String widgetKey,
+            final String widgetType,
+            final String targetFilePath,
+            final String byteOffsetHex,
+            final String originalValue,
+            final String changeValue,
+            final String liveValue,
+            final boolean isActive,
+            final String componentLabel,
+            final String customSourceFilePath
+    ) {
         ConfigParameterSpec.StateSnapshot snapshot;
         long startNs = System.nanoTime();
         int offset = this.parseOffsetString(byteOffsetHex);
         File target = this.resolveTargetFile(fallbackDir, targetFilePath);
-        String safeKey = widgetKey != null && !widgetKey.trim().isEmpty() ? widgetKey.trim() : (componentLabel != null ? componentLabel : "widget");
-        String orig = originalValue != null ? originalValue : "";
-        String chg = changeValue != null ? changeValue : "";
-        String live = liveValue != null ? liveValue : "";
-        String type = widgetType != null ? widgetType.toUpperCase(Locale.US) : "BUTTON";
+        final String safeKey = widgetKey != null && !widgetKey.trim().isEmpty() ? widgetKey.trim() : (componentLabel != null ? componentLabel : "widget");
+        final String orig = originalValue != null ? originalValue : "";
+        final String chg = changeValue != null ? changeValue : "";
+        final String live = liveValue != null ? liveValue : "";
+        final String type = widgetType != null ? widgetType.toUpperCase(Locale.US) : "BUTTON";
         boolean useTextScriptPatch = this.shouldUseTextOrScriptPatch(target, orig, chg, type);
         String replacementText = this.computeReplacementText(type, orig, chg, live, isActive, useTextScriptPatch);
         String previousVal = this.lastWrittenByWidget.getOrDefault(safeKey, isActive ? orig : chg);
-        LocalConfigStateWriter localConfigStateWriter = this;
-        synchronized (localConfigStateWriter) {
+        final String resolvedLabel = componentLabel != null && !componentLabel.trim().isEmpty() ? componentLabel : safeKey;
+
+        Runnable retryAction = () -> this.applyWidgetPatchAsync(
+                fallbackDir, safeKey, type, targetFilePath, byteOffsetHex, orig, chg, live, isActive, resolvedLabel, customSourceFilePath
+        );
+
+        synchronized (this) {
             try {
                 File parent = target.getParentFile();
                 if (parent != null && !parent.exists()) {
                     parent.mkdirs();
                 }
-                String fileReplaceOrMergeSummary = this.tryApplySelectedFileReplaceOrMergeLocked(fallbackDir, target, safeKey, type, live, isActive, customSourceFilePath);
+                String fileReplaceOrMergeSummary = this.tryApplySelectedFileReplaceOrMergeLocked(
+                        fallbackDir, target, safeKey, type, live, isActive, customSourceFilePath
+                );
                 if (fileReplaceOrMergeSummary != null) {
                     replacementText = fileReplaceOrMergeSummary;
                     this.lastWrittenByWidget.put(safeKey, replacementText);
@@ -402,8 +669,8 @@ public class LocalConfigStateWriter {
                     this.patchTextOrPythonFileLocked(target, safeKey, orig, chg, replacementText, isActive);
                 } else {
                     byte[] payloadBytes = this.parsePayloadBytes(replacementText);
-                    try (RandomAccessFile raf = new RandomAccessFile(target, "rw");){
-                        if (raf.length() < (long)(offset + payloadBytes.length)) {
+                    try (RandomAccessFile raf = new RandomAccessFile(target, "rw")) {
+                        if (raf.length() < (long) (offset + payloadBytes.length)) {
                             raf.setLength(Math.max(64, offset + payloadBytes.length));
                         }
                         raf.seek(offset);
@@ -415,18 +682,295 @@ public class LocalConfigStateWriter {
                 this.currentState.targetFilePath = target.getAbsolutePath();
                 this.currentState.rawTextContent = replacementText;
                 snapshot = this.currentState.copy();
-            }
-            catch (IOException e) {
-                this.notifyWriteError(componentLabel, "Cannot modify " + target.getAbsolutePath() + " (" + e.getMessage() + "). Grant All Files Access permission.");
+            } catch (IOException directIoError) {
+                // Direct file change failed! Try Shizuku Privileged Bridge automatically if available & authorized
+                Context ctx = this.appContext;
+                if (ctx != null) {
+                    ShizukuPrivilegeBridge.probeShizukuBinder(ctx);
+                }
+                if (ShizukuPrivilegeBridge.isShizukuReady(ctx)) {
+                    try {
+                        String shizukuResultSummary = this.applyWidgetPatchViaShizukuLocked(
+                                ctx,
+                                fallbackDir,
+                                target,
+                                safeKey,
+                                type,
+                                offset,
+                                orig,
+                                chg,
+                                live,
+                                replacementText,
+                                isActive,
+                                useTextScriptPatch,
+                                customSourceFilePath
+                        );
+                        replacementText = shizukuResultSummary;
+                        this.lastWrittenByWidget.put(safeKey, replacementText);
+                        this.activeFile = target;
+                        this.currentState.targetFilePath = target.getAbsolutePath();
+                        this.currentState.rawTextContent = replacementText;
+                        snapshot = this.currentState.copy();
+                        long elapsedUs = (System.nanoTime() - startNs) / 1000L;
+                        this.clearLastDiagnosticReport();
+                        this.notifyWriteSuccess(resolvedLabel, offset, previousVal, replacementText, elapsedUs, snapshot);
+                        return true;
+                    } catch (IOException shizukuIoError) {
+                        WriteDiagnosticReport report = this.buildFailureDiagnosticReport(
+                                ctx,
+                                resolvedLabel,
+                                target.getAbsolutePath(),
+                                "Direct IO: " + directIoError.getMessage() + " | Shizuku IO: " + shizukuIoError.getMessage(),
+                                retryAction
+                        );
+                        this.notifyDiagnosticWriteError(report);
+                        return false;
+                    }
+                }
+
+                WriteDiagnosticReport report = this.buildFailureDiagnosticReport(
+                        ctx,
+                        resolvedLabel,
+                        target.getAbsolutePath(),
+                        directIoError.getMessage(),
+                        retryAction
+                );
+                this.notifyDiagnosticWriteError(report);
                 return false;
             }
         }
         long elapsedUs = (System.nanoTime() - startNs) / 1000L;
-        this.notifyWriteSuccess(componentLabel, offset, previousVal, replacementText, elapsedUs, snapshot);
+        this.clearLastDiagnosticReport();
+        this.notifyWriteSuccess(resolvedLabel, offset, previousVal, replacementText, elapsedUs, snapshot);
         return true;
     }
 
-    private String tryApplySelectedFileReplaceOrMergeLocked(File fallbackDir, File target, String safeKey, String widgetType, String liveValue, boolean isActive, String explicitSourceFilePath) throws IOException {
+    /**
+     * Performs the file replacement/merge, text script patch, or binary offset patch via Shizuku
+     * when direct file access is blocked by Android 13/14/15+ restricted directories (/Android/data, /Android/obb, etc.).
+     */
+    private String applyWidgetPatchViaShizukuLocked(
+            Context ctx,
+            File fallbackDir,
+            File target,
+            String safeKey,
+            String widgetType,
+            int offset,
+            String orig,
+            String chg,
+            String live,
+            String computedReplacementText,
+            boolean isActive,
+            boolean useTextScriptPatch,
+            String customSourceFilePath
+    ) throws IOException {
+        String absTarget = target.getAbsolutePath();
+
+        // 1. Check if widget(s) have a selected source file for replace/merge
+        List<File> activeSourceFiles = this.collectActiveSourceFilesForTargetLocked(
+                fallbackDir, target, safeKey, widgetType, live, isActive, customSourceFilePath
+        );
+        if (activeSourceFiles != null) {
+            File backupDir = new File(fallbackDir, "original_target_backups");
+            if (!backupDir.exists()) {
+                backupDir.mkdirs();
+            }
+            String targetHashKey = Integer.toHexString(absTarget.hashCode()) + "_" + target.getName().replaceAll("[^a-zA-Z0-9._-]", "_");
+            File backupFile = new File(backupDir, targetHashKey + ".orig_backup");
+            File markerFile = new File(backupDir, targetHashKey + ".replaced_marker");
+
+            if (!markerFile.exists() && ShizukuPrivilegeBridge.remoteFileExistsViaShizuku(absTarget)) {
+                ShizukuPrivilegeBridge.copyFileViaShizuku(absTarget, backupFile.getAbsolutePath());
+            }
+
+            if (activeSourceFiles.isEmpty()) {
+                if (markerFile.exists()) {
+                    if (backupFile.exists()) {
+                        ShizukuPrivilegeBridge.ShellExecResult restoreRes = ShizukuPrivilegeBridge.copyFileViaShizuku(backupFile.getAbsolutePath(), absTarget);
+                        if (!restoreRes.isSuccess()) {
+                            throw new IOException(restoreRes.getCombinedError());
+                        }
+                        backupFile.delete();
+                    } else {
+                        ShizukuPrivilegeBridge.deleteFileViaShizuku(absTarget);
+                    }
+                    markerFile.delete();
+                    return "Restored Original via Shizuku (" + target.getName() + ")";
+                }
+                return "Original Kept via Shizuku (" + target.getName() + ")";
+            }
+
+            if (activeSourceFiles.size() == 1) {
+                File singleSource = activeSourceFiles.get(0);
+                ShizukuPrivilegeBridge.ShellExecResult copyRes = ShizukuPrivilegeBridge.copyFileViaShizuku(singleSource.getAbsolutePath(), absTarget);
+                if (!copyRes.isSuccess()) {
+                    throw new IOException(copyRes.getCombinedError());
+                }
+                if (!markerFile.exists()) {
+                    try {
+                        markerFile.createNewFile();
+                    } catch (Exception ignored) {
+                    }
+                }
+                return "Replaced via Shizuku: " + target.getName() + " <= " + singleSource.getName();
+            }
+
+            boolean mergeAsText = this.areAllFilesLikelyTextLocked(activeSourceFiles);
+            StringBuilder mergedNames = new StringBuilder();
+            for (int i = 0; i < activeSourceFiles.size(); ++i) {
+                if (i > 0) mergedNames.append(" + ");
+                mergedNames.append(activeSourceFiles.get(i).getName());
+            }
+            ShizukuPrivilegeBridge.ShellExecResult mergeRes = ShizukuPrivilegeBridge.mergeFilesViaShizuku(ctx, activeSourceFiles, absTarget, mergeAsText);
+            if (!mergeRes.isSuccess()) {
+                throw new IOException(mergeRes.getCombinedError());
+            }
+            if (!markerFile.exists()) {
+                try {
+                    markerFile.createNewFile();
+                } catch (Exception ignored) {
+                }
+            }
+            return "Merged via Shizuku (" + activeSourceFiles.size() + " files: " + mergedNames + ") => " + target.getName();
+        }
+
+        // 2. Text / Script / Config file patch via Shizuku
+        if (useTextScriptPatch) {
+            String existingContent = "";
+            if (ShizukuPrivilegeBridge.remoteFileExistsViaShizuku(absTarget)) {
+                String readViaShizuku = ShizukuPrivilegeBridge.readTextFileViaShizuku(absTarget, 0x200000);
+                if (readViaShizuku != null) {
+                    existingContent = readViaShizuku;
+                }
+            }
+            String updatedContent = this.computePatchedTextContentLocked(existingContent, safeKey, orig, chg, computedReplacementText, isActive);
+            ShizukuPrivilegeBridge.ShellExecResult writeRes = ShizukuPrivilegeBridge.writeBytesViaShizuku(
+                    ctx, absTarget, updatedContent.getBytes(StandardCharsets.UTF_8)
+            );
+            if (!writeRes.isSuccess()) {
+                throw new IOException(writeRes.getCombinedError());
+            }
+            return computedReplacementText + " [Shizuku]";
+        }
+
+        // 3. Binary offset patch via Shizuku
+        byte[] payloadBytes = this.parsePayloadBytes(computedReplacementText);
+        ShizukuPrivilegeBridge.ShellExecResult patchRes = ShizukuPrivilegeBridge.patchBytesAtOffsetViaShizuku(
+                ctx, absTarget, offset, payloadBytes, 64
+        );
+        if (!patchRes.isSuccess()) {
+            throw new IOException(patchRes.getCombinedError());
+        }
+        return computedReplacementText + " [Shizuku]";
+    }
+
+    /**
+     * Builds a comprehensive diagnostic report explaining WHY the file modification failed
+     * and how to fix Android 13/14/15 restricted path errors using Shizuku.
+     */
+    public WriteDiagnosticReport buildFailureDiagnosticReport(
+            Context context,
+            String componentLabel,
+            String targetFilePath,
+            String rawErrorMessage,
+            Runnable retryAction
+    ) {
+        Context ctx = context != null ? context : this.appContext;
+        boolean hasStoragePerm = ctx == null || LocalConfigStateWriter.hasStoragePermissionGranted(ctx);
+        boolean isRestricted = ShizukuPrivilegeBridge.isRestrictedAndroidPath(targetFilePath);
+        boolean shizukuInstalled = ShizukuPrivilegeBridge.isShizukuInstalled(ctx);
+        boolean shizukuRunning = ShizukuPrivilegeBridge.isShizukuRunning(ctx);
+        boolean shizukuAuthorized = ShizukuPrivilegeBridge.hasShizukuPermission(ctx);
+        String rawErr = rawErrorMessage != null && !rawErrorMessage.trim().isEmpty()
+                ? rawErrorMessage.trim()
+                : "IOException: EACCES (Permission denied)";
+
+        String category;
+        String title;
+        String detail;
+        boolean requiresShizuku = false;
+
+        if (isRestricted) {
+            requiresShizuku = true;
+            category = "ANDROID_15_RESTRICTED_PATH";
+            title = "Android " + Build.VERSION.SDK_INT + " Restricted Path Blocked";
+            StringBuilder sb = new StringBuilder();
+            sb.append("Target file path (").append(targetFilePath).append(") falls inside a protected Android system/scoped directory (/Android/data, /Android/obb, or /data).\n\n");
+            sb.append("Why it failed (Akhir kyu fail hua):\n");
+            sb.append("On Android 13, 14, and Android 15, the OS kernel & FUSE storage daemon strictly block normal apps from directly modifying files inside /Android/data and /Android/obb — even when 'All Files Access' (MANAGE_EXTERNAL_STORAGE) is turned ON.\n\n");
+            sb.append("How to fix with Shizuku (Shizuku se kaise solve karein):\n");
+            if (!shizukuInstalled) {
+                sb.append("1. Install the Shizuku app on your device and start it via Wireless Debugging (ADB).\n");
+                sb.append("2. Tap 'Connect Shizuku & Retry' below — both Studio Error and the compiled APK use Shizuku's privileged shell (UID 2000) to bypass Android 15 path restrictions.");
+            } else if (!shizukuRunning) {
+                sb.append("1. Shizuku is installed on your device, but its background service is NOT running.\n");
+                sb.append("2. Tap 'Open Shizuku App' below, start the Shizuku service via Wireless Debugging, then tap 'Retry File Change'.");
+            } else if (!shizukuAuthorized) {
+                sb.append("1. Shizuku is running! However, this app has not been granted Shizuku permission yet.\n");
+                sb.append("2. Tap 'Authorize Shizuku & Fix Now' below and press 'Allow' on the Shizuku prompt to immediately unlock this restricted path.");
+            } else {
+                sb.append("1. Shizuku is connected, but the target directory or file returned an OS error.\n");
+                sb.append("2. Verify that the folder/package exists on your device and tap 'Retry with Shizuku'.");
+            }
+            detail = sb.toString();
+        } else if (!hasStoragePerm) {
+            category = "MISSING_ALL_FILES_PERMISSION";
+            title = "All Files Access Permission Missing";
+            detail = "Target file (" + targetFilePath + ") could not be modified because 'All Files Access' (MANAGE_EXTERNAL_STORAGE) permission is not granted.\n\n"
+                    + "Why it failed (Akhir kyu fail hua):\n"
+                    + "Android blocked write access to shared storage (" + rawErr + ").\n\n"
+                    + "How to fix:\n"
+                    + "Tap 'Grant All Files Access' below to allow storage modification, or use Shizuku for elevated file access.";
+        } else if (rawErr.toLowerCase(Locale.US).contains("eacces") || rawErr.toLowerCase(Locale.US).contains("permission denied") || rawErr.toLowerCase(Locale.US).contains("operation not permitted")) {
+            requiresShizuku = true;
+            category = "ANDROID_15_RESTRICTED_PATH";
+            title = "Restricted File Access Denied (EACCES)";
+            detail = "Android OS kernel blocked direct modification of:\n" + targetFilePath + "\n\n"
+                    + "Why it failed (Akhir kyu fail hua):\n"
+                    + "Even with storage permission enabled, Android " + Build.VERSION.SDK_INT + " enforces SELinux / Scoped Storage protection on this path (" + rawErr + ").\n\n"
+                    + "How to fix with Shizuku:\n"
+                    + "Use Shizuku (ADB / Root privilege bridge) to modify this file directly. Tap the Shizuku button below to authorize and retry.";
+        } else {
+            category = "IO_WRITE_ERROR";
+            title = "Target File Modification Failed";
+            detail = "Could not modify target file at:\n" + targetFilePath + "\n\n"
+                    + "Why it failed (Akhir kyu fail hua):\n"
+                    + rawErr + "\n\n"
+                    + "If this path is protected by Android 14/15 restrictions, enable Shizuku below to perform the file change with elevated privileges.";
+        }
+
+        return new WriteDiagnosticReport(
+                false,
+                componentLabel,
+                targetFilePath,
+                category,
+                title,
+                detail,
+                rawErr,
+                isRestricted,
+                requiresShizuku,
+                hasStoragePerm,
+                shizukuInstalled,
+                shizukuRunning,
+                shizukuAuthorized,
+                false,
+                retryAction
+        );
+    }
+
+    /**
+     * Returns null if no widget has a custom source file configured for this target;
+     * otherwise returns the list of currently active source files (empty list if all widgets targeting this file are OFF).
+     */
+    private List<File> collectActiveSourceFilesForTargetLocked(
+            File fallbackDir,
+            File target,
+            String safeKey,
+            String widgetType,
+            String liveValue,
+            boolean isActive,
+            String explicitSourceFilePath
+    ) {
         List<DynamicOverlayRegistry.OverlayItemSpec> registrySpecs = DynamicOverlayRegistry.getActiveItems();
         ArrayList<File> activeSourceFiles = new ArrayList<File>();
         boolean anyWidgetHasSourceFileForTarget = false;
@@ -439,7 +983,9 @@ public class LocalConfigStateWriter {
                 boolean isCurrentTriggeredWidget = specKey.equals(safeKey);
                 if (isCurrentTriggeredWidget) {
                     currentWidgetFoundInRegistry = true;
-                    spec.currentValue = "SLIDER".equalsIgnoreCase(widgetType) ? (liveValue != null && !liveValue.isEmpty() ? liveValue : (isActive ? "50" : "0")) : (isActive ? "1" : "0");
+                    spec.currentValue = "SLIDER".equalsIgnoreCase(widgetType)
+                            ? (liveValue != null && !liveValue.isEmpty() ? liveValue : (isActive ? "50" : "0"))
+                            : (isActive ? "1" : "0");
                     if (explicitSourceFilePath != null && !explicitSourceFilePath.trim().isEmpty()) {
                         spec.customImagePath = explicitSourceFilePath.trim();
                     }
@@ -448,7 +994,9 @@ public class LocalConfigStateWriter {
                 boolean sameTarget = specTarget.getAbsolutePath().equals(target.getAbsolutePath());
                 if (!sameTarget) continue;
 
-                String srcPath = isCurrentTriggeredWidget && explicitSourceFilePath != null && !explicitSourceFilePath.trim().isEmpty() ? explicitSourceFilePath.trim() : (spec.customImagePath != null ? spec.customImagePath.trim() : "");
+                String srcPath = isCurrentTriggeredWidget && explicitSourceFilePath != null && !explicitSourceFilePath.trim().isEmpty()
+                        ? explicitSourceFilePath.trim()
+                        : (spec.customImagePath != null ? spec.customImagePath.trim() : "");
                 if (srcPath.isEmpty()) continue;
                 File srcFile = new File(srcPath);
                 if (!srcFile.exists() || !srcFile.isFile()) continue;
@@ -461,8 +1009,7 @@ public class LocalConfigStateWriter {
                     int v = 0;
                     try {
                         v = Integer.parseInt(spec.currentValue != null ? spec.currentValue.trim() : "0");
-                    }
-                    catch (Exception ignored) {
+                    } catch (Exception ignored) {
                     }
                     specActive = v > 0;
                 } else {
@@ -488,6 +1035,25 @@ public class LocalConfigStateWriter {
         if (!anyWidgetHasSourceFileForTarget) {
             return null;
         }
+        return activeSourceFiles;
+    }
+
+    private String tryApplySelectedFileReplaceOrMergeLocked(File fallbackDir, File target, String safeKey, String widgetType, String liveValue, boolean isActive, String explicitSourceFilePath) throws IOException {
+        List<File> activeSourceFiles = this.collectActiveSourceFilesForTargetLocked(
+                fallbackDir, target, safeKey, widgetType, liveValue, isActive, explicitSourceFilePath
+        );
+        if (activeSourceFiles == null) {
+            return null;
+        }
+
+        // If target is inside an Android 13/14/15 restricted path (/Android/data or /Android/obb) and cannot be written directly,
+        // throw IOException immediately so the caller routes through ShizukuPrivilegeBridge or triggers the Error Dialog.
+        if (ShizukuPrivilegeBridge.isRestrictedAndroidPath(target.getAbsolutePath())) {
+            File parent = target.getParentFile();
+            if (parent == null || !parent.canWrite()) {
+                throw new IOException("open failed: EACCES (Permission denied) on restricted path " + target.getAbsolutePath());
+            }
+        }
 
         File backupDir = new File(fallbackDir, "original_target_backups");
         if (!backupDir.exists()) {
@@ -505,8 +1071,8 @@ public class LocalConfigStateWriter {
         if (activeSourceFiles.isEmpty()) {
             // All options turned OFF: restore original target file if backed up
             if (markerFile.exists()) {
-                if (target.exists()) {
-                    target.delete();
+                if (target.exists() && !target.delete()) {
+                    throw new IOException("Cannot delete modified target file at " + target.getAbsolutePath());
                 }
                 if (backupFile.exists()) {
                     this.copyRawFileBytesLocked(backupFile, target);
@@ -519,8 +1085,8 @@ public class LocalConfigStateWriter {
         }
 
         // Remove the original file at the target path so selected file(s) replace/merge with the exact same target name
-        if (target.exists()) {
-            target.delete();
+        if (target.exists() && !target.delete()) {
+            throw new IOException("open failed: EACCES (Permission denied) deleting " + target.getAbsolutePath());
         }
 
         if (activeSourceFiles.size() == 1) {
@@ -529,8 +1095,7 @@ public class LocalConfigStateWriter {
             if (!markerFile.exists()) {
                 try {
                     markerFile.createNewFile();
-                }
-                catch (Exception ignored) {
+                } catch (Exception ignored) {
                 }
             }
             return "Replaced " + target.getName() + " <= " + singleSource.getName();
@@ -539,7 +1104,7 @@ public class LocalConfigStateWriter {
         // Multiple options ON: merge all selected files into target path with the exact same target filename
         boolean mergeAsText = this.areAllFilesLikelyTextLocked(activeSourceFiles);
         StringBuilder mergedNames = new StringBuilder();
-        try (FileOutputStream fos = new FileOutputStream(target, false);){
+        try (FileOutputStream fos = new FileOutputStream(target, false)) {
             byte[] buf = new byte[8192];
             for (int i = 0; i < activeSourceFiles.size(); ++i) {
                 File src = activeSourceFiles.get(i);
@@ -548,7 +1113,7 @@ public class LocalConfigStateWriter {
                 }
                 mergedNames.append(src.getName());
                 byte lastByte = -1;
-                try (FileInputStream fis = new FileInputStream(src);){
+                try (FileInputStream fis = new FileInputStream(src)) {
                     int read;
                     while ((read = fis.read(buf)) != -1) {
                         fos.write(buf, 0, read);
@@ -564,15 +1129,13 @@ public class LocalConfigStateWriter {
             fos.flush();
             try {
                 fos.getFD().sync();
-            }
-            catch (Exception ignored) {
+            } catch (Exception ignored) {
             }
         }
         if (!markerFile.exists()) {
             try {
                 markerFile.createNewFile();
-            }
-            catch (Exception ignored) {
+            } catch (Exception ignored) {
             }
         }
         return "Merged (" + activeSourceFiles.size() + " files: " + mergedNames + ") => " + target.getName();
@@ -584,7 +1147,7 @@ public class LocalConfigStateWriter {
             parent.mkdirs();
         }
         try (FileInputStream fis = new FileInputStream(source);
-             FileOutputStream fos = new FileOutputStream(dest, false);){
+             FileOutputStream fos = new FileOutputStream(dest, false)) {
             int read;
             byte[] buf = new byte[8192];
             while ((read = fis.read(buf)) != -1) {
@@ -593,23 +1156,21 @@ public class LocalConfigStateWriter {
             fos.flush();
             try {
                 fos.getFD().sync();
-            }
-            catch (Exception ignored) {
+            } catch (Exception ignored) {
             }
         }
     }
 
     private boolean areAllFilesLikelyTextLocked(List<File> files) {
         for (File f : files) {
-            try (FileInputStream fis = new FileInputStream(f);){
+            try (FileInputStream fis = new FileInputStream(f)) {
                 byte[] sample = new byte[512];
                 int n = fis.read(sample);
                 for (int i = 0; i < n; ++i) {
                     if (sample[i] != 0) continue;
                     return false;
                 }
-            }
-            catch (Exception e) {
+            } catch (Exception e) {
                 return false;
             }
         }
@@ -620,13 +1181,21 @@ public class LocalConfigStateWriter {
         try {
             File target = this.resolveTargetFile(fallbackDir, rawPath);
             if (!target.exists()) {
+                if (ShizukuPrivilegeBridge.isRestrictedAndroidPath(target.getAbsolutePath())
+                        && ShizukuPrivilegeBridge.isShizukuReady(this.appContext)
+                        && ShizukuPrivilegeBridge.remoteFileExistsViaShizuku(target.getAbsolutePath())) {
+                    String shizukuText = ShizukuPrivilegeBridge.readTextFileViaShizuku(target.getAbsolutePath(), 4096);
+                    if (shizukuText != null) {
+                        return shizukuText.trim().isEmpty() ? "(Empty file via Shizuku: " + target.getName() + ")" : shizukuText.trim();
+                    }
+                }
                 return "File not found yet (" + target.getAbsolutePath() + ")";
             }
             if (target.length() == 0L) {
                 return "(Empty file: " + target.getName() + ")";
             }
             StringBuilder sb = new StringBuilder();
-            try (BufferedReader reader = new BufferedReader(new InputStreamReader((InputStream)new FileInputStream(target), StandardCharsets.UTF_8));){
+            try (BufferedReader reader = new BufferedReader(new InputStreamReader((InputStream) new FileInputStream(target), StandardCharsets.UTF_8))) {
                 char[] buf = new char[4096];
                 int read = reader.read(buf);
                 if (read > 0) {
@@ -635,8 +1204,17 @@ public class LocalConfigStateWriter {
             }
             String text = sb.toString().trim();
             return text.isEmpty() ? "(Empty)" : text;
-        }
-        catch (Exception e) {
+        } catch (Exception e) {
+            try {
+                File target = this.resolveTargetFile(fallbackDir, rawPath);
+                if (ShizukuPrivilegeBridge.isShizukuReady(this.appContext)) {
+                    String shizukuText = ShizukuPrivilegeBridge.readTextFileViaShizuku(target.getAbsolutePath(), 4096);
+                    if (shizukuText != null) {
+                        return shizukuText.trim().isEmpty() ? "(Empty via Shizuku)" : shizukuText.trim();
+                    }
+                }
+            } catch (Throwable ignored) {
+            }
             return "Read blocked (" + e.getMessage() + ")";
         }
     }
@@ -645,15 +1223,22 @@ public class LocalConfigStateWriter {
         try {
             String chg;
             File target = this.resolveTargetFile(fallbackDir, rawPath);
-            if (!target.exists() || !target.canRead() || target.length() == 0L) {
-                return defaultActive;
+            String content = "";
+            if (target.exists() && target.canRead() && target.length() > 0L) {
+                content = this.readEntireTextFileWithBufferedReader(target);
+            } else if (ShizukuPrivilegeBridge.isRestrictedAndroidPath(target.getAbsolutePath())
+                    && ShizukuPrivilegeBridge.isShizukuReady(this.appContext)
+                    && ShizukuPrivilegeBridge.remoteFileExistsViaShizuku(target.getAbsolutePath())) {
+                String shizukuContent = ShizukuPrivilegeBridge.readTextFileViaShizuku(target.getAbsolutePath(), 65536);
+                if (shizukuContent != null) {
+                    content = shizukuContent;
+                }
             }
-            String content = this.readEntireTextFileWithBufferedReader(target);
             if (content.isEmpty()) {
                 return defaultActive;
             }
             String orig = originalValue != null && !this.isSingleHexOrByte(originalValue.trim()) ? originalValue.trim() : "";
-            String string = chg = changeValue != null && !this.isSingleHexOrByte(changeValue.trim()) ? changeValue.trim() : "";
+            chg = changeValue != null && !this.isSingleHexOrByte(changeValue.trim()) ? changeValue.trim() : "";
             if (!(chg.isEmpty() || orig.isEmpty() || chg.equalsIgnoreCase(orig))) {
                 boolean hasChg = this.containsTokenOrSubstring(content, chg);
                 boolean hasOrig = this.containsTokenOrSubstring(content, orig);
@@ -664,9 +1249,7 @@ public class LocalConfigStateWriter {
                     return false;
                 }
             }
-        }
-        catch (Exception exception) {
-            // empty catch block
+        } catch (Exception ignored) {
         }
         return defaultActive;
     }
@@ -683,17 +1266,22 @@ public class LocalConfigStateWriter {
     }
 
     private String readEntireTextFileWithBufferedReader(File target) throws IOException {
-        if (!target.exists() || target.length() == 0L) {
+        if (!target.exists()) {
+            if (ShizukuPrivilegeBridge.isRestrictedAndroidPath(target.getAbsolutePath())) {
+                throw new IOException("open failed: EACCES (Permission denied) reading restricted path " + target.getAbsolutePath());
+            }
             return "";
         }
-        StringBuilder sb = new StringBuilder((int)Math.min(target.length() + 64L, 0x200000L));
+        if (target.length() == 0L) {
+            return "";
+        }
+        StringBuilder sb = new StringBuilder((int) Math.min(target.length() + 64L, 0x200000L));
         try (FileInputStream fis = new FileInputStream(target);
-             InputStreamReader isr = new InputStreamReader((InputStream)fis, StandardCharsets.UTF_8);
-             BufferedReader reader = new BufferedReader(isr);){
+             InputStreamReader isr = new InputStreamReader((InputStream) fis, StandardCharsets.UTF_8);
+             BufferedReader reader = new BufferedReader(isr)) {
             int charsRead;
             char[] buffer = new char[8192];
             int totalRead = 0;
-            int maxChars = 0x200000;
             while ((charsRead = reader.read(buffer)) != -1) {
                 sb.append(buffer, 0, charsRead);
                 if ((totalRead += charsRead) < 0x200000) continue;
@@ -709,27 +1297,23 @@ public class LocalConfigStateWriter {
             parent.mkdirs();
         }
         try (FileOutputStream fos = new FileOutputStream(target, false);
-             OutputStreamWriter osw = new OutputStreamWriter((OutputStream)fos, StandardCharsets.UTF_8);
-             BufferedWriter writer = new BufferedWriter(osw);){
+             OutputStreamWriter osw = new OutputStreamWriter((OutputStream) fos, StandardCharsets.UTF_8);
+             BufferedWriter writer = new BufferedWriter(osw)) {
             writer.write(updatedContent);
             writer.flush();
             try {
                 fos.getFD().sync();
-            }
-            catch (Exception exception) {
-                // empty catch block
+            } catch (Exception ignored) {
             }
         }
     }
 
     private String computeReplacementText(String widgetType, String originalValue, String changeValue, String liveValue, boolean isActive, boolean isTextScriptFile) {
-        String live;
         String orig = originalValue != null ? originalValue : "";
         String chg = changeValue != null ? changeValue : "";
-        String string = live = liveValue != null ? liveValue : "";
+        String live = liveValue != null ? liveValue : "";
         if ("SLIDER".equals(widgetType)) {
-            String valStr;
-            String string2 = valStr = live.trim().isEmpty() ? "0" : live.trim();
+            String valStr = live.trim().isEmpty() ? "0" : live.trim();
             if ("0".equals(valStr) && !orig.trim().isEmpty() && !"0x00".equalsIgnoreCase(orig.trim()) && orig.matches(".*[-+]?\\d+(\\.\\d+)?.*") && !orig.trim().matches("[-+]?\\d+(\\.\\d+)?")) {
                 return this.replaceLastNumber(orig, valStr);
             }
@@ -812,21 +1396,18 @@ public class LocalConfigStateWriter {
             try {
                 int v = Integer.parseInt(s.substring(2), 16);
                 return v >= 0 && v <= 255;
-            }
-            catch (NumberFormatException e) {
+            } catch (NumberFormatException e) {
                 return false;
             }
         }
         return false;
     }
 
-    private void patchTextOrPythonFileLocked(File target, String widgetKey, String originalValue, String changeValue, String replacementText, boolean isActive) throws IOException {
+    private String computePatchedTextContentLocked(String content, String widgetKey, String originalValue, String changeValue, String replacementText, boolean isActive) {
         String lastWritten;
-        String chgClean;
-        String content = this.readEntireTextFileWithBufferedReader(target);
         ArrayList<String> candidates = new ArrayList<String>();
         String origClean = originalValue != null && !this.isSingleHexOrByte(originalValue.trim()) ? originalValue : "";
-        String string = chgClean = changeValue != null && !this.isSingleHexOrByte(changeValue.trim()) ? changeValue : "";
+        String chgClean = changeValue != null && !this.isSingleHexOrByte(changeValue.trim()) ? changeValue : "";
         if (isActive) {
             this.addCandidateVariants(candidates, origClean);
             lastWritten = this.lastWrittenByWidget.get(widgetKey);
@@ -889,12 +1470,24 @@ public class LocalConfigStateWriter {
                 varName = this.extractAssignmentVarName(changeValue);
             }
             if (varName != null && (m = (linePattern = Pattern.compile("(?m)^([ \\t]*" + Pattern.quote(varName) + "[ \\t]*=[ \\t]*)([^\\r\\n#]+)")).matcher(content)).find()) {
-                updatedContent = replacementText.contains("=") ? content.substring(0, m.start()) + replacementText + content.substring(m.end()) : content.substring(0, m.start(2)) + replacementText + content.substring(m.end(2));
+                updatedContent = replacementText.contains("=")
+                        ? content.substring(0, m.start()) + replacementText + content.substring(m.end())
+                        : content.substring(0, m.start(2)) + replacementText + content.substring(m.end(2));
             }
         }
         if (updatedContent == null) {
-            updatedContent = !content.isEmpty() && content.contains(replacementText) ? content : (content.trim().isEmpty() || !content.trim().contains("\n") ? replacementText : (content.endsWith("\n") ? content + replacementText + "\n" : content + "\n" + replacementText + "\n"));
+            updatedContent = !content.isEmpty() && content.contains(replacementText)
+                    ? content
+                    : (content.trim().isEmpty() || !content.trim().contains("\n")
+                    ? replacementText
+                    : (content.endsWith("\n") ? content + replacementText + "\n" : content + "\n" + replacementText + "\n"));
         }
+        return updatedContent;
+    }
+
+    private void patchTextOrPythonFileLocked(File target, String widgetKey, String originalValue, String changeValue, String replacementText, boolean isActive) throws IOException {
+        String content = this.readEntireTextFileWithBufferedReader(target);
+        String updatedContent = this.computePatchedTextContentLocked(content, widgetKey, originalValue, changeValue, replacementText, isActive);
         this.writeEntireTextFileWithBufferedWriter(target, updatedContent);
         this.lastWrittenByWidget.put(widgetKey, replacementText);
     }
@@ -933,8 +1526,7 @@ public class LocalConfigStateWriter {
                 return Math.max(0, Integer.parseInt(clean.substring(2), 16));
             }
             return Math.max(0, Integer.parseInt(clean));
-        }
-        catch (NumberFormatException e) {
+        } catch (NumberFormatException e) {
             return 0;
         }
     }
@@ -947,15 +1539,14 @@ public class LocalConfigStateWriter {
         try {
             if (clean.startsWith("0x") || clean.startsWith("0X")) {
                 int v = Integer.parseInt(clean.substring(2), 16);
-                return new byte[]{(byte)(v & 0xFF)};
+                return new byte[]{(byte) (v & 0xFF)};
             }
             int v = Integer.parseInt(clean);
             if (v >= 0 && v <= 255) {
-                return new byte[]{(byte)v};
+                return new byte[]{(byte) v};
             }
             return ByteBuffer.allocate(4).putInt(v).array();
-        }
-        catch (NumberFormatException e) {
+        } catch (NumberFormatException e) {
             return clean.getBytes(StandardCharsets.UTF_8);
         }
     }
@@ -997,8 +1588,8 @@ public class LocalConfigStateWriter {
                 relFromExt = clean.substring("/mnt/sdcard/".length());
             }
             if (relFromExt != null) {
-                File[] roots;
-                for (File root : roots = new File[]{new File("/storage/emulated/0"), Environment.getExternalStorageDirectory(), new File("/sdcard")}) {
+                File[] roots = new File[]{new File("/storage/emulated/0"), Environment.getExternalStorageDirectory(), new File("/sdcard")};
+                for (File root : roots) {
                     if (root == null) continue;
                     File alias = new File(root, relFromExt);
                     if (alias.exists()) {
@@ -1010,15 +1601,9 @@ public class LocalConfigStateWriter {
                 }
                 return new File("/storage/emulated/0", relFromExt);
             }
-            if (clean.startsWith("/storage/") || clean.startsWith("/sdcard/") || clean.startsWith("/mnt/")) {
-                return candidate;
-            }
-            File parent = candidate.getParentFile();
-            if (parent != null && (parent.exists() || parent.mkdirs())) {
-                return candidate;
-            }
-            String name = candidate.getName().isEmpty() ? "studio_overlay_target.bin" : candidate.getName();
-            return new File(fallbackDir, name);
+            // Keep exact absolute path (including /data/..., /system/..., /storage/..., /sdcard/..., /mnt/...)
+            // so restricted paths are never silently redirected to internal fallbackDir!
+            return candidate;
         }
         File extRoot = new File("/storage/emulated/0");
         File extCandidate = new File(extRoot, clean);
@@ -1063,9 +1648,7 @@ public class LocalConfigStateWriter {
                     return sub;
                 }
             }
-        }
-        catch (Throwable throwable) {
-            // empty catch block
+        } catch (Throwable ignored) {
         }
         return null;
     }
@@ -1076,8 +1659,7 @@ public class LocalConfigStateWriter {
         }
         String[] parts = relativePath.split("/");
         File current = rootDir;
-        for (int i = 0; i < parts.length; ++i) {
-            String part = parts[i];
+        for (String part : parts) {
             if (part.isEmpty()) continue;
             File exact = new File(current, part);
             if (exact.exists()) {
@@ -1103,7 +1685,7 @@ public class LocalConfigStateWriter {
             this.writeFullStateToFileLocked(file);
             return;
         }
-        try (RandomAccessFile raf = new RandomAccessFile(file, "rw");){
+        try (RandomAccessFile raf = new RandomAccessFile(file, "rw")) {
             long crcVal;
             raf.seek(offset);
             raf.write(payload);
@@ -1114,7 +1696,7 @@ public class LocalConfigStateWriter {
             crc32.update(headerPrefix);
             this.currentState.crc32Value = crcVal = crc32.getValue();
             raf.seek(60L);
-            raf.writeInt((int)crcVal);
+            raf.writeInt((int) crcVal);
             raf.seek(0L);
             raf.readFully(this.currentState.rawHeaderBytes);
             String kvBlock = this.buildKeyValueBlockLocked();
@@ -1131,10 +1713,10 @@ public class LocalConfigStateWriter {
         long crcVal;
         byte[] header = new byte[64];
         System.arraycopy(ConfigParameterSpec.MAGIC_BYTES, 0, header, 0, 4);
-        header[4] = (byte)(this.currentState.hwAccel ? 1 : 0);
-        header[5] = (byte)(this.currentState.zeroCopyDma ? 1 : 0);
-        header[6] = (byte)(this.currentState.quantInt8 ? 1 : 0);
-        header[7] = (byte)(this.currentState.kernelTelemetry ? 1 : 0);
+        header[4] = (byte) (this.currentState.hwAccel ? 1 : 0);
+        header[5] = (byte) (this.currentState.zeroCopyDma ? 1 : 0);
+        header[6] = (byte) (this.currentState.quantInt8 ? 1 : 0);
+        header[7] = (byte) (this.currentState.kernelTelemetry ? 1 : 0);
         ByteBuffer.wrap(header, 8, 4).putInt(this.currentState.workerThreads);
         ByteBuffer.wrap(header, 12, 4).putInt(this.currentState.freqGovernorPct);
         ByteBuffer.wrap(header, 16, 4).putInt(this.currentState.vramCeilingMb);
@@ -1144,10 +1726,10 @@ public class LocalConfigStateWriter {
         CRC32 crc32 = new CRC32();
         crc32.update(header, 0, 60);
         this.currentState.crc32Value = crcVal = crc32.getValue();
-        ByteBuffer.wrap(header, 60, 4).putInt((int)crcVal);
+        ByteBuffer.wrap(header, 60, 4).putInt((int) crcVal);
         System.arraycopy(header, 0, this.currentState.rawHeaderBytes, 0, 64);
         this.currentState.rawTextContent = kvBlock = this.buildKeyValueBlockLocked();
-        try (RandomAccessFile raf = new RandomAccessFile(file, "rw");){
+        try (RandomAccessFile raf = new RandomAccessFile(file, "rw")) {
             raf.seek(0L);
             raf.write(header);
             byte[] kvBytes = kvBlock.getBytes(StandardCharsets.UTF_8);
@@ -1261,10 +1843,15 @@ public class LocalConfigStateWriter {
         }
     }
 
-    private void notifyWriteError(String key, String message) {
+    private void notifyDiagnosticWriteError(WriteDiagnosticReport report) {
+        this.lastDiagnosticReport = report;
+        String summaryMessage = report.whyFailedTitle + " — Path: " + report.targetFilePath
+                + " (" + report.rawKernelError + "). "
+                + (report.requiresShizuku ? "Use Shizuku to fix Android 15 restricted path." : "Check storage permissions.");
         Runnable task = () -> {
             for (OnStateWriteListener listener : this.listeners) {
-                listener.onWriteError(key, message);
+                listener.onWriteError(report.componentLabel, summaryMessage);
+                listener.onWriteDiagnosticError(report);
             }
         };
         if (this.mainHandler != null) {
@@ -1274,9 +1861,23 @@ public class LocalConfigStateWriter {
         }
     }
 
+    private void notifyWriteError(String key, String message) {
+        WriteDiagnosticReport report = this.buildFailureDiagnosticReport(
+                this.appContext,
+                key,
+                this.activeFile != null ? this.activeFile.getAbsolutePath() : "studio_overlay_target.bin",
+                message,
+                null
+        );
+        this.notifyDiagnosticWriteError(report);
+    }
+
     public static interface OnStateWriteListener {
         public void onWriteSuccess(String var1, int var2, String var3, String var4, long var5, ConfigParameterSpec.StateSnapshot var7);
 
         public void onWriteError(String var1, String var2);
+
+        default public void onWriteDiagnosticError(WriteDiagnosticReport report) {
+        }
     }
 }

@@ -202,7 +202,13 @@ public class DynamicOverlayRegistry {
                     spec.bgImagePath = DynamicOverlayRegistry.extractBundledAssetIfPresent(context, c.optString("bgImageAsset", ""), "widget_bg_" + spec.id + ".png");
                     spec.soundTrigger = c.optString("onSound", "NONE");
                     spec.offSoundTrigger = c.optString("offSound", "NONE");
-                    spec.customImagePath = DynamicOverlayRegistry.extractBundledAssetIfPresent(context, c.optString("customImageAsset", ""), "img_" + spec.id + ".jpg");
+                    String customFileName = c.optString("customImageFileName", "");
+                    if (customFileName == null || customFileName.trim().isEmpty()) {
+                        String rawAsset = c.optString("customImageAsset", "");
+                        int slashIdx = rawAsset.lastIndexOf('/');
+                        customFileName = slashIdx >= 0 ? rawAsset.substring(slashIdx + 1) : ("img_" + spec.id + ".bin");
+                    }
+                    spec.customImagePath = DynamicOverlayRegistry.extractBundledAssetIfPresent(context, c.optString("customImageAsset", ""), customFileName);
                     spec.customSoundPath = DynamicOverlayRegistry.extractBundledAssetIfPresent(context, c.optString("onSoundAsset", ""), "on_snd_" + spec.id + ".mp3");
                     spec.offCustomSoundPath = DynamicOverlayRegistry.extractBundledAssetIfPresent(context, c.optString("offSoundAsset", ""), "off_snd_" + spec.id + ".mp3");
                     spec.targetFilePath = c.optString("targetFile", "");

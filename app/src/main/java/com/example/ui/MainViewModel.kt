@@ -25,6 +25,7 @@ import com.example.engine.ConfigParameterSpec
 import com.example.engine.GgufBlueprintEngine
 import com.example.engine.GgufModelState
 import com.example.engine.LocalConfigStateWriter
+import com.example.engine.ShizukuPrivilegeBridge
 import com.example.engine.SoundTriggerPlayer
 import com.example.engine.StudioGenerationMode
 import com.example.engine.TermuxServerClient
@@ -106,6 +107,11 @@ data class StudioUiState(
     val aiCompiledApkFilePath: String? = null,
     val aiCompiledPublicApkPath: String? = null,
     val aiCompiledApkSummary: String? = null,
+    val shizukuStatusSummary: String = "Not Connected",
+    val isShizukuReady: Boolean = false,
+    val isShizukuRunning: Boolean = false,
+    val isShizukuInstalled: Boolean = false,
+    val activeWriteErrorReport: LocalConfigStateWriter.WriteDiagnosticReport? = null,
     val statusToast: String = "Welcome to Studio Error — Choose Offline Mode or Online (AI) Mode."
 )
 
@@ -136,6 +142,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             },
             hasOverlayPermission = Settings.canDrawOverlays(appContext),
             hasStoragePermission = LocalConfigStateWriter.hasStoragePermissionGranted(appContext),
+            shizukuStatusSummary = ShizukuPrivilegeBridge.getStatusSummary(appContext),
+            isShizukuReady = ShizukuPrivilegeBridge.isShizukuReady(appContext),
+            isShizukuRunning = ShizukuPrivilegeBridge.isShizukuRunning(appContext),
+            isShizukuInstalled = ShizukuPrivilegeBridge.isShizukuInstalled(appContext),
             ggufModelState = GgufBlueprintEngine.loadOrFallbackToSample(
                 appContext,
                 null,
@@ -179,6 +189,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
             _uiState.update {
                 it.copy(
+                    activeWriteErrorReport = null,
+                    shizukuStatusSummary = ShizukuPrivilegeBridge.getStatusSummary(appContext),
+                    isShizukuReady = ShizukuPrivilegeBridge.isShizukuReady(appContext),
+                    isShizukuRunning = ShizukuPrivilegeBridge.isShizukuRunning(appContext),
+                    isShizukuInstalled = ShizukuPrivilegeBridge.isShizukuInstalled(appContext),
                     statusToast = "$parameterKey → $stateLabel [Wrote $newValue @$offsetHex → $fileName]"
                 )
             }
@@ -202,13 +217,40 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 it.copy(statusToast = "Write Error ($parameterKey): $errorMessage")
             }
         }
+
+        override fun onWriteDiagnosticError(report: LocalConfigStateWriter.WriteDiagnosticReport) {
+            _uiState.update {
+                it.copy(
+                    activeWriteErrorReport = report,
+                    shizukuStatusSummary = ShizukuPrivilegeBridge.getStatusSummary(appContext),
+                    isShizukuReady = ShizukuPrivilegeBridge.isShizukuReady(appContext),
+                    isShizukuRunning = ShizukuPrivilegeBridge.isShizukuRunning(appContext),
+                    isShizukuInstalled = ShizukuPrivilegeBridge.isShizukuInstalled(appContext),
+                    statusToast = "⚠️ ${report.whyFailedTitle}: ${report.targetFilePath}"
+                )
+            }
+        }
+    }
+
+    private val shizukuListener = ShizukuPrivilegeBridge.OnShizukuStateChangeListener { _, _, _ ->
+        _uiState.update {
+            it.copy(
+                shizukuStatusSummary = ShizukuPrivilegeBridge.getStatusSummary(appContext),
+                isShizukuReady = ShizukuPrivilegeBridge.isShizukuReady(appContext),
+                isShizukuRunning = ShizukuPrivilegeBridge.isShizukuRunning(appContext),
+                isShizukuInstalled = ShizukuPrivilegeBridge.isShizukuInstalled(appContext)
+            )
+        }
     }
 
     private val _bundledStandaloneComponents = MutableStateFlow<List<CanvasComponentEntity>>(emptyList())
     val bundledStandaloneComponents: StateFlow<List<CanvasComponentEntity>> = _bundledStandaloneComponents.asStateFlow()
 
     init {
+        stateWriter.bindAppContext(appContext)
         stateWriter.addListener(writeListener)
+        ShizukuPrivilegeBridge.addListener(shizukuListener)
+        ShizukuPrivilegeBridge.probeShizukuBinder(appContext)
         if (DynamicOverlayRegistry.isBundledStandaloneApk(appContext)) {
             DynamicOverlayRegistry.loadFromBundledAssetsIfEmpty(appContext)
             val projName = DynamicOverlayRegistry.getActiveProjectName()
@@ -273,6 +315,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     override fun onCleared() {
         stateWriter.removeListener(writeListener)
+        ShizukuPrivilegeBridge.removeListener(shizukuListener)
         super.onCleared()
     }
 
@@ -1373,13 +1416,145 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun refreshOverlayPermission() {
+        ShizukuPrivilegeBridge.probeShizukuBinder(appContext)
         _uiState.update {
             it.copy(
                 hasOverlayPermission = Settings.canDrawOverlays(appContext),
                 hasStoragePermission = LocalConfigStateWriter.hasStoragePermissionGranted(appContext),
-                isSystemOverlayRunning = FloatingDashboardService.isRunning()
+                isSystemOverlayRunning = FloatingDashboardService.isRunning(),
+                shizukuStatusSummary = ShizukuPrivilegeBridge.getStatusSummary(appContext),
+                isShizukuReady = ShizukuPrivilegeBridge.isShizukuReady(appContext),
+                isShizukuRunning = ShizukuPrivilegeBridge.isShizukuRunning(appContext),
+                isShizukuInstalled = ShizukuPrivilegeBridge.isShizukuInstalled(appContext)
             )
         }
+    }
+
+    fun dismissWriteErrorDialog() {
+        stateWriter.clearLastDiagnosticReport()
+        _uiState.update { it.copy(activeWriteErrorReport = null) }
+    }
+
+    fun requestOrLaunchShizuku() {
+        connectOrAuthorizeShizuku(andRetryFailedWrite = true)
+    }
+
+    fun testAllActiveTargetPathsNow() {
+        runTargetPathTestForCurrentProject()
+    }
+
+    fun connectOrAuthorizeShizuku(andRetryFailedWrite: Boolean = false) {
+        viewModelScope.launch(Dispatchers.IO) {
+            ShizukuPrivilegeBridge.probeShizukuBinder(appContext)
+            val ready = ShizukuPrivilegeBridge.isShizukuReady(appContext)
+            val running = ShizukuPrivilegeBridge.isShizukuRunning(appContext)
+            val installed = ShizukuPrivilegeBridge.isShizukuInstalled(appContext)
+            val summary = ShizukuPrivilegeBridge.getStatusSummary(appContext)
+            withContext(Dispatchers.Main) {
+                _uiState.update {
+                    it.copy(
+                        shizukuStatusSummary = summary,
+                        isShizukuReady = ready,
+                        isShizukuRunning = running,
+                        isShizukuInstalled = installed
+                    )
+                }
+                if (ready) {
+                    val pendingReport = _uiState.value.activeWriteErrorReport
+                    if (andRetryFailedWrite && pendingReport?.retryAction != null) {
+                        dismissWriteErrorDialog()
+                        pendingReport.retryAction.run()
+                    } else {
+                        dismissWriteErrorDialog()
+                        runTargetPathTestForCurrentProject()
+                    }
+                    _uiState.update {
+                        it.copy(statusToast = "✅ Shizuku Connected ($summary) — Restricted Paths Unlocked!")
+                    }
+                } else if (running) {
+                    ShizukuPrivilegeBridge.requestShizukuPermission(appContext, 9501)
+                    _uiState.update {
+                        it.copy(statusToast = "🛡️ Allow Shizuku permission popup to unlock Android 15 restricted paths.")
+                    }
+                } else if (installed) {
+                    ShizukuPrivilegeBridge.openOrLaunchShizukuManager(appContext)
+                    _uiState.update {
+                        it.copy(statusToast = "🚀 Start Shizuku service in the Shizuku app, then return here.")
+                    }
+                } else {
+                    ShizukuPrivilegeBridge.openOrLaunchShizukuManager(appContext)
+                    _uiState.update {
+                        it.copy(statusToast = "⚠️ Shizuku not installed. Install Shizuku (moe.shizuku.privileged.api) & start via Wireless Debugging.")
+                    }
+                }
+            }
+        }
+    }
+
+    fun retryFailedTargetWrite() {
+        val report = _uiState.value.activeWriteErrorReport
+        dismissWriteErrorDialog()
+        ShizukuPrivilegeBridge.probeShizukuBinder(appContext)
+        if (report?.retryAction != null) {
+            report.retryAction.run()
+        } else {
+            runTargetPathTestForCurrentProject()
+        }
+    }
+
+    fun runTargetPathTestForCurrentProject() {
+        val components = if (_uiState.value.isBundledStandaloneApk) {
+            _bundledStandaloneComponents.value
+        } else {
+            activeComponents.value
+        }
+        val specs = components.map { comp ->
+            DynamicOverlayRegistry.OverlayItemSpec().apply {
+                id = comp.id
+                type = comp.type
+                label = comp.label
+                posXDp = comp.posXDp
+                posYDp = comp.posYDp
+                widthDp = comp.widthDp
+                heightDp = comp.heightDp
+                bgColorHex = comp.bgColorHex
+                textColorHex = comp.textColorHex
+                bgImagePath = comp.bgImagePath
+                customImagePath = comp.customImagePath
+                soundTrigger = comp.soundTrigger
+                customSoundPath = comp.customSoundPath
+                offSoundTrigger = comp.offSoundTrigger
+                offCustomSoundPath = comp.offCustomSoundPath
+                targetFilePath = comp.targetFilePath
+                byteOffsetHex = comp.byteOffsetHex
+                onPayloadHex = comp.onPayloadHex
+                offPayloadHex = comp.offPayloadHex
+                sliderMax = comp.sliderMax
+                currentValue = comp.currentValue
+                linkUrl = comp.linkUrl
+            }
+        }
+        stateWriter.runFloatStartupTargetTestAndApplyAsync(appContext, appContext.filesDir, specs)
+    }
+
+    fun testSingleTargetPathFileChange(
+        label: String,
+        targetFilePath: String,
+        byteOffsetHex: String = "0x04",
+        offPayloadHex: String = "0x00",
+        onPayloadHex: String = "0x01",
+        customSourceFilePath: String? = null
+    ) {
+        stateWriter.testTargetPathFileChangeAsync(
+            appContext,
+            appContext.filesDir,
+            label,
+            targetFilePath,
+            byteOffsetHex,
+            offPayloadHex,
+            onPayloadHex,
+            customSourceFilePath
+        )
     }
 
     fun launchSystemFloatingOverlay() {

@@ -56,6 +56,7 @@ import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Save
+import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.SwapHoriz
 import androidx.compose.material3.AlertDialog
@@ -103,6 +104,7 @@ import kotlin.math.roundToInt
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.data.CanvasComponentEntity
 import com.example.engine.LocalConfigStateWriter
+import com.example.engine.ShizukuPrivilegeBridge
 import com.example.ui.CompiledStandaloneAppScreen
 import com.example.ui.ComponentCountSummary
 import com.example.ui.ComponentTrackerBanner
@@ -118,6 +120,7 @@ import com.example.ui.StudioEditCodeDialog
 import com.example.ui.StudioProjectLauncherScreen
 import com.example.ui.StudioUiState
 import com.example.ui.StudioWelcomeModeScreen
+import com.example.ui.TargetWriteErrorShizukuDialog
 import com.example.ui.parseHexColorSafe
 import com.example.ui.theme.MyApplicationTheme
 
@@ -139,6 +142,21 @@ class MainActivity : ComponentActivity() {
                 val projects by viewModel.allProjects.collectAsStateWithLifecycle()
                 val components by viewModel.activeComponents.collectAsStateWithLifecycle()
                 val bundledStandaloneComponents by viewModel.bundledStandaloneComponents.collectAsStateWithLifecycle()
+
+                uiState.activeWriteErrorReport?.let { errorReport ->
+                    TargetWriteErrorShizukuDialog(
+                        report = errorReport,
+                        shizukuStatusSummary = uiState.shizukuStatusSummary,
+                        isShizukuReady = uiState.isShizukuReady,
+                        isShizukuRunning = uiState.isShizukuRunning,
+                        onDismiss = viewModel::dismissWriteErrorDialog,
+                        onConnectOrAuthorizeShizuku = viewModel::requestOrLaunchShizuku,
+                        onOpenShizukuApp = {
+                            ShizukuPrivilegeBridge.openOrDownloadShizukuApp(this@MainActivity)
+                        },
+                        onRetryWrite = viewModel::retryFailedTargetWrite
+                    )
+                }
 
                 when (uiState.destination) {
                     StudioDestination.WELCOME_SCREEN -> {
@@ -228,10 +246,16 @@ class MainActivity : ComponentActivity() {
                                 isOverlayRunning = uiState.isSystemOverlayRunning,
                                 hasStoragePermission = uiState.hasStoragePermission,
                                 hasOverlayPermission = uiState.hasOverlayPermission,
+                                shizukuStatusSummary = uiState.shizukuStatusSummary,
+                                isShizukuReady = uiState.isShizukuReady,
+                                isShizukuRunning = uiState.isShizukuRunning,
+                                isShizukuInstalled = uiState.isShizukuInstalled,
                                 statusMessage = uiState.statusToast,
                                 onStartOverlay = viewModel::launchSystemFloatingOverlay,
                                 onStopOverlay = viewModel::stopSystemFloatingOverlay,
                                 onRefreshPermissions = viewModel::refreshOverlayPermission,
+                                onRequestOrLaunchShizuku = viewModel::requestOrLaunchShizuku,
+                                onTestAllTargetPaths = viewModel::testAllActiveTargetPathsNow,
                                 onTriggerComponentLive = viewModel::triggerComponentAction,
                                 onBackToStudioEditor = if (uiState.isBundledStandaloneApk) null else {
                                     { viewModel.closeCompiledAppPreview() }
@@ -310,7 +334,9 @@ class MainActivity : ComponentActivity() {
                             onDismissDownloadDialog = viewModel::dismissDownloadSummaryDialog,
                             onLaunchSystemOverlay = viewModel::launchSystemFloatingOverlay,
                             onStopSystemOverlay = viewModel::stopSystemFloatingOverlay,
-                            onRefreshPermissions = viewModel::refreshOverlayPermission
+                            onRefreshPermissions = viewModel::refreshOverlayPermission,
+                            onRequestOrLaunchShizuku = viewModel::requestOrLaunchShizuku,
+                            onTestAllTargetPaths = viewModel::testAllActiveTargetPathsNow
                         )
                     }
                 }
@@ -361,7 +387,9 @@ fun StudioCanvasBuilderScreen(
     onDismissDownloadDialog: () -> Unit,
     onLaunchSystemOverlay: () -> Unit,
     onStopSystemOverlay: () -> Unit,
-    onRefreshPermissions: () -> Unit = {}
+    onRefreshPermissions: () -> Unit = {},
+    onRequestOrLaunchShizuku: () -> Unit = {},
+    onTestAllTargetPaths: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val project = uiState.activeProject ?: return
@@ -1684,6 +1712,65 @@ fun StudioCanvasBuilderScreen(
                             Text(
                                 text = "Save",
                                 color = Color.White,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
+                    }
+
+                    Surface(
+                        shape = RoundedCornerShape(10.dp),
+                        color = if (uiState.isShizukuReady) Color(0xFF064E3B) else Color(0xFF1E1338),
+                        border = BorderStroke(
+                            1.dp,
+                            if (uiState.isShizukuReady) Color(0xFF10B981) else Color(0xFF8B5CF6)
+                        ),
+                        modifier = Modifier
+                            .clickable { onRequestOrLaunchShizuku() }
+                            .testTag("studio_shizuku_status_button")
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(5.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Security,
+                                contentDescription = "Shizuku Android 15 Fix",
+                                tint = if (uiState.isShizukuReady) Color(0xFF34D399) else Color(0xFFC4B5FD),
+                                modifier = Modifier.size(14.dp)
+                            )
+                            Text(
+                                text = if (uiState.isShizukuReady) "Shizuku ✓" else "Shizuku Fix",
+                                color = Color.White,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                        }
+                    }
+
+                    Surface(
+                        shape = RoundedCornerShape(10.dp),
+                        color = Color(0xFF0B253A),
+                        border = BorderStroke(1.dp, Color(0xFF38BDF8)),
+                        modifier = Modifier
+                            .clickable { onTestAllTargetPaths() }
+                            .testTag("studio_test_target_paths_button")
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(5.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.PlayArrow,
+                                contentDescription = "Test Target Path File Change",
+                                tint = Color(0xFF38BDF8),
+                                modifier = Modifier.size(14.dp)
+                            )
+                            Text(
+                                text = "Test Target",
+                                color = Color(0xFFE0F2FE),
                                 fontSize = 11.sp,
                                 fontWeight = FontWeight.SemiBold
                             )
