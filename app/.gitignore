@@ -1,0 +1,15 @@
+build
+build/
+/build
+**/build/
+*.aab
+*.dex
+*.class
+llama.cpp
+llama.cpp/
+**/llama.cpp/
+**/llama.cpp/**
+src/main/cpp/
+cpp/
+
+
