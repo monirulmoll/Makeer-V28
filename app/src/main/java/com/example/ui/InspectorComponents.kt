@@ -150,17 +150,12 @@ private val BuiltInVoiceAndSoundPresets = listOf(
     "VOICE_MOD_OFF" to "🗣️ Voice: Mod Disabled",
     "ACTIVATE" to "🗣️ Voice: Target File Patched",
     "DEACTIVATE" to "🗣️ Voice: Original Restored",
-    "POWER_UP" to "🚀 Power Up",
-    "POWER_DOWN" to "📉 Power Down",
-    "CONFIRM_TONE" to "✅ Confirm Beep",
-    "DIGITAL_BEEP" to "🔔 Digital Beep",
-    "LASER_ZAP" to "🔫 Laser Zap",
-    "CYBER_PULSE" to "⚡ Cyber Pulse",
+    "SYSTEM_CLICK" to "👆 Click Sound",
     "SWITCH_POP" to "🔘 Switch Pop",
-    "SYSTEM_CLICK" to "👆 UI Click",
-    "WARNING" to "⚠️ Alert Siren",
+    "CONFIRM_TONE" to "✅ Single Beep",
+    "DIGITAL_BEEP" to "🔔 Double Beep",
     "NONE" to "🔇 Silent (None)",
-    "CUSTOM_FILE" to "🎵 Custom Voice File"
+    "CUSTOM_FILE" to "🎵 Custom Voice"
 )
 
 private val DefaultWidgetBorderColorPresets = listOf(
@@ -261,7 +256,7 @@ fun ComponentPropertyInspectorSheet(
     onClose: () -> Unit
 ) {
     val context = LocalContext.current
-    var activeTab by remember { mutableStateOf("General") }
+    var activeTab by remember { mutableStateOf("Main") }
     var label by remember(component.id) { mutableStateOf(component.label) }
     var customSourceFilePath by remember(component.id, component.customImagePath) {
         mutableStateOf(component.customImagePath)
@@ -613,12 +608,12 @@ fun ComponentPropertyInspectorSheet(
                 }
             }
 
-            // Pinned 4 Tabs: General | Voice / Sound | Style | Advanced
+            // Pinned 3 Tabs: Main | Style | Advanced
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
-                listOf("General", "Voice / Sound", "Style", "Advanced").forEach { tab ->
+                listOf("Main", "Style", "Advanced").forEach { tab ->
                     val isSelected = activeTab == tab
                     Surface(
                         shape = RoundedCornerShape(10.dp),
@@ -631,6 +626,7 @@ fun ComponentPropertyInspectorSheet(
                             .weight(1f)
                             .height(32.dp)
                             .clickable { activeTab = tab }
+                            .testTag("inspector_tab_${tab.lowercase(Locale.US)}")
                     ) {
                         Box(contentAlignment = Alignment.Center) {
                             Text(
@@ -647,7 +643,7 @@ fun ComponentPropertyInspectorSheet(
             }
 
             @Composable
-            fun renderVoiceAndSoundTriggerSection() {
+            fun renderVoiceSection() {
                 val onCustomSoundName = remember(customSoundPath) {
                     if (customSoundPath.isNotBlank()) File(customSoundPath).name else ""
                 }
@@ -664,14 +660,21 @@ fun ComponentPropertyInspectorSheet(
                         .border(BorderStroke(1.dp, Color(0xFF1E3A5F)), RoundedCornerShape(12.dp))
                         .padding(10.dp)
                 ) {
-                    // 1. ON VOICE / SOUND SECTION
+                    Text(
+                        text = "Voice",
+                        color = Color.White,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.ExtraBold
+                    )
+
+                    // 1. ON VOICE SECTION
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.SpaceBetween,
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            text = if (isLinkOpenerWidget) "ON / Click Voice & Sound" else "ON Voice / Sound (Widget ON hone par)",
+                            text = "ON Voice",
                             color = Color(0xFF38BDF8),
                             fontSize = 11.sp,
                             fontWeight = FontWeight.ExtraBold
@@ -701,7 +704,7 @@ fun ComponentPropertyInspectorSheet(
                         }
                     }
 
-                    // Select ON Voice / Audio File Box + Purple Folder Button
+                    // Select ON Voice Box + Purple Folder Button
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically,
@@ -730,9 +733,9 @@ fun ComponentPropertyInspectorSheet(
                             ) {
                                 Text(
                                     text = if (onCustomSoundName.isNotBlank()) {
-                                        "🎵 ON Voice File: $onCustomSoundName"
+                                        "🎵 Voice: $onCustomSoundName"
                                     } else {
-                                        "Select ON Voice / Sound File (MP3/WAV/OGG)"
+                                        "Select ON Voice"
                                     },
                                     color = if (onCustomSoundName.isNotBlank()) Color(0xFF6EE7B7) else Color(0xFFCBD5E1),
                                     fontSize = 11.sp,
@@ -756,7 +759,7 @@ fun ComponentPropertyInspectorSheet(
                         ) {
                             Icon(
                                 imageVector = Icons.Default.Folder,
-                                contentDescription = "Select ON Voice File",
+                                contentDescription = "Select ON Voice",
                                 tint = Color.White,
                                 modifier = Modifier.size(19.dp)
                             )
@@ -764,13 +767,13 @@ fun ComponentPropertyInspectorSheet(
                     }
 
                     Text(
-                        text = "Default Inbuilt ON Voices & Sounds:",
+                        text = "Default ON Voice:",
                         color = Color(0xFF94A3B8),
                         fontSize = 10.sp,
                         fontWeight = FontWeight.SemiBold
                     )
 
-                    // Horizontal strip of Built-in Default Voices & Sounds for ON
+                    // Horizontal strip of Built-in Default Voices for ON
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -810,7 +813,7 @@ fun ComponentPropertyInspectorSheet(
                         }
                     }
 
-                    // 2. OFF VOICE / SOUND SECTION
+                    // 2. OFF VOICE SECTION
                     Spacer(Modifier.height(2.dp))
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -818,7 +821,7 @@ fun ComponentPropertyInspectorSheet(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            text = "OFF Voice / Sound (Widget OFF hone par)",
+                            text = "OFF Voice",
                             color = Color(0xFFF87171),
                             fontSize = 11.sp,
                             fontWeight = FontWeight.ExtraBold
@@ -848,7 +851,7 @@ fun ComponentPropertyInspectorSheet(
                         }
                     }
 
-                    // Select OFF Voice / Audio File Box + Purple Folder Button
+                    // Select OFF Voice Box + Red Folder Button
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically,
@@ -877,9 +880,9 @@ fun ComponentPropertyInspectorSheet(
                             ) {
                                 Text(
                                     text = if (offCustomSoundName.isNotBlank()) {
-                                        "🎵 OFF Voice File: $offCustomSoundName"
+                                        "🎵 Voice: $offCustomSoundName"
                                     } else {
-                                        "Select OFF Voice / Sound File (MP3/WAV/OGG)"
+                                        "Select OFF Voice"
                                     },
                                     color = if (offCustomSoundName.isNotBlank()) Color(0xFFFCA5A5) else Color(0xFFCBD5E1),
                                     fontSize = 11.sp,
@@ -903,7 +906,7 @@ fun ComponentPropertyInspectorSheet(
                         ) {
                             Icon(
                                 imageVector = Icons.Default.Folder,
-                                contentDescription = "Select OFF Voice File",
+                                contentDescription = "Select OFF Voice",
                                 tint = Color.White,
                                 modifier = Modifier.size(19.dp)
                             )
@@ -911,7 +914,7 @@ fun ComponentPropertyInspectorSheet(
                     }
 
                     Text(
-                        text = "Default Inbuilt OFF Voices & Sounds:",
+                        text = "Default OFF Voice:",
                         color = Color(0xFF94A3B8),
                         fontSize = 10.sp,
                         fontWeight = FontWeight.SemiBold
@@ -967,7 +970,7 @@ fun ComponentPropertyInspectorSheet(
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
                 when (activeTab) {
-                    "General" -> {
+                    "Main" -> {
                         val selectedFileName = remember(customSourceFilePath) {
                             if (customSourceFilePath.isNotBlank()) {
                                 File(customSourceFilePath).name.ifBlank { customSourceFilePath }
@@ -1212,9 +1215,6 @@ fun ComponentPropertyInspectorSheet(
                                     }
                                 }
 
-                                // VOICE & SOUND TRIGGERS RIGHT BELOW TARGET PATH FOR INSTANT ACCESS
-                                renderVoiceAndSoundTriggerSection()
-
                                 // Live Target File & Main File Validation Error / Explanation Box
                                 val cleanTarget = targetFile.trim()
                                 val cleanMain = customSourceFilePath.trim()
@@ -1367,13 +1367,16 @@ fun ComponentPropertyInspectorSheet(
                                 }
                             }
                         }
+                    }
 
-                        // VOICE & SOUND TRIGGERS FOR NON-EXECUTABLE WIDGETS (LINK / TEXT) IN GENERAL TAB
-                        if (!isExecutableFileWidget) {
-                            renderVoiceAndSoundTriggerSection()
-                        }
+                    "Style" -> {
+                        val liveBgColor = parseHexColorSafe(bgHex, Color(0xFF334155))
+                        val liveTextColor = parseHexColorSafe(textHex, Color.White)
 
-                        // WIDGET CORNER BORDER LINE CUSTOMIZATION (Color, Transparent, Animation & Size 0 to 100)
+                        // 0. Voice Section (Exclusively in Style tab)
+                        renderVoiceSection()
+
+                        // 0B. Widget Corner Border Line Customization (Exclusively in Style tab)
                         Column(
                             verticalArrangement = Arrangement.spacedBy(6.dp),
                             modifier = Modifier
@@ -1425,7 +1428,6 @@ fun ComponentPropertyInspectorSheet(
                                     .testTag("inspector_border_width_slider")
                             )
 
-                            // Border Color Presets (including Transparent)
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
@@ -1480,7 +1482,6 @@ fun ComponentPropertyInspectorSheet(
                                 }
                             }
 
-                            // Border Animation Selector
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
@@ -1515,211 +1516,6 @@ fun ComponentPropertyInspectorSheet(
                                 }
                             }
                         }
-
-                        // 4. Widget Background Image (From Phone Gallery)
-                        Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
-                            Text(
-                                text = "Widget Background Image (From Phone)",
-                                color = Color(0xFFCBD5E1),
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.Bold
-                            )
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                Surface(
-                                    shape = RoundedCornerShape(12.dp),
-                                    color = InspectorFieldBg,
-                                    border = BorderStroke(1.dp, InspectorFieldBorder),
-                                    modifier = Modifier
-                                        .weight(1f)
-                                        .height(44.dp)
-                                        .clickable { widgetBgImagePickerLauncher.launch("image/*") }
-                                        .testTag("general_widget_bg_image_pick_button")
-                                ) {
-                                    Row(
-                                        modifier = Modifier
-                                            .fillMaxSize()
-                                            .padding(horizontal = 10.dp),
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                    ) {
-                                        if (widgetBgPreviewBitmap != null) {
-                                            Image(
-                                                bitmap = widgetBgPreviewBitmap,
-                                                contentDescription = "Selected Widget BG",
-                                                contentScale = ContentScale.Crop,
-                                                modifier = Modifier
-                                                    .size(28.dp)
-                                                    .clip(RoundedCornerShape(6.dp))
-                                            )
-                                        } else {
-                                            Icon(
-                                                imageVector = Icons.Default.Image,
-                                                contentDescription = null,
-                                                tint = Color(0xFF38BDF8),
-                                                modifier = Modifier.size(18.dp)
-                                            )
-                                        }
-                                        Text(
-                                            text = if (bgImagePath.isNotBlank()) "Image set (Tap to change)" else "Select background image from phone",
-                                            color = if (bgImagePath.isNotBlank()) Color.White else InspectorPlaceholderColor,
-                                            fontSize = 11.sp,
-                                            fontWeight = FontWeight.SemiBold,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis,
-                                            modifier = Modifier.weight(1f)
-                                        )
-                                    }
-                                }
-
-                                if (bgImagePath.isNotBlank()) {
-                                    Surface(
-                                        shape = RoundedCornerShape(10.dp),
-                                        color = Color(0xFFEF4444).copy(alpha = 0.2f),
-                                        border = BorderStroke(1.dp, Color(0xFFEF4444)),
-                                        modifier = Modifier
-                                            .height(44.dp)
-                                            .clickable {
-                                                bgImagePath = ""
-                                                onSaveComponent(buildUpdated(overrideBgImagePath = ""))
-                                            }
-                                            .testTag("general_widget_bg_image_clear_button")
-                                    ) {
-                                        Box(
-                                            modifier = Modifier.padding(horizontal = 10.dp),
-                                            contentAlignment = Alignment.Center
-                                        ) {
-                                            Text(
-                                                text = "Remove",
-                                                color = Color(0xFFFCA5A5),
-                                                fontSize = 11.sp,
-                                                fontWeight = FontWeight.Bold
-                                            )
-                                        }
-                                    }
-                                }
-                            }
-                        }
-
-                        // 5. Widget Background Default Colors + Transparency Strip
-                        Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween,
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Text(
-                                    text = "Widget Background (Colors & Transparent)",
-                                    color = Color(0xFFCBD5E1),
-                                    fontSize = 11.sp,
-                                    fontWeight = FontWeight.Bold
-                                )
-                                Text(
-                                    text = "Opacity: $currentOpacityPercent% • Style Tab →",
-                                    color = Color(0xFF38BDF8),
-                                    fontSize = 10.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    modifier = Modifier.clickable { activeTab = "Style" }
-                                )
-                            }
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .horizontalScroll(rememberScrollState()),
-                                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                DefaultWidgetBgPresets.forEach { (presetHex, presetName) ->
-                                    val isTransparentChip = presetHex.equals("#00000000", ignoreCase = true)
-                                    val isSelectedBg = if (isTransparentChip) {
-                                        currentOpacityPercent == 0
-                                    } else {
-                                        bgHex.equals(presetHex, ignoreCase = true) ||
-                                            (currentOpacityPercent > 0 && presetHex.length == 7 &&
-                                                extractBaseRgb6(bgHex).equals(presetHex.removePrefix("#"), ignoreCase = true))
-                                    }
-                                    val swatchColor = parseHexColorSafe(presetHex, Color(0xFF334155))
-                                    val slug = presetHex.removePrefix("#").lowercase(Locale.US)
-                                    Surface(
-                                        shape = RoundedCornerShape(10.dp),
-                                        color = if (isSelectedBg) Color(0xFF1E293B) else InspectorFieldBg,
-                                        border = BorderStroke(
-                                            width = if (isSelectedBg) 1.5.dp else 1.dp,
-                                            color = if (isSelectedBg) Color(0xFF38BDF8) else InspectorFieldBorder
-                                        ),
-                                        modifier = Modifier
-                                            .clickable { applyDefaultWidgetBgPreset(presetHex) }
-                                            .testTag("general_widget_bg_preset_$slug")
-                                    ) {
-                                        Row(
-                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
-                                            verticalAlignment = Alignment.CenterVertically,
-                                            horizontalArrangement = Arrangement.spacedBy(5.dp)
-                                        ) {
-                                            Box(
-                                                modifier = Modifier
-                                                    .size(14.dp)
-                                                    .clip(CircleShape)
-                                                    .background(swatchColor)
-                                                    .border(BorderStroke(1.dp, Color(0xFF94A3B8)), CircleShape)
-                                            )
-                                            Text(
-                                                text = presetName,
-                                                color = Color.White,
-                                                fontSize = 10.sp,
-                                                fontWeight = if (isSelectedBg) FontWeight.ExtraBold else FontWeight.Medium,
-                                                maxLines = 1
-                                            )
-                                        }
-                                    }
-                                }
-                            }
-
-                            // Quick Transparency / Opacity Selector for Selected Color right in General tab
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .horizontalScroll(rememberScrollState()),
-                                horizontalArrangement = Arrangement.spacedBy(6.dp),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                QuickOpacityPresets.forEach { (pct, labelText) ->
-                                    val isSelectedOpacity = currentOpacityPercent == pct
-                                    Surface(
-                                        shape = RoundedCornerShape(8.dp),
-                                        color = if (isSelectedOpacity) Color(0xFF1E293B) else InspectorFieldBg,
-                                        border = BorderStroke(
-                                            width = if (isSelectedOpacity) 1.5.dp else 1.dp,
-                                            color = if (isSelectedOpacity) Color(0xFF38BDF8) else InspectorFieldBorder
-                                        ),
-                                        modifier = Modifier
-                                            .clickable { applyWidgetBgOpacityPercent(pct) }
-                                            .testTag("general_widget_opacity_$pct")
-                                    ) {
-                                        Text(
-                                            text = labelText,
-                                            color = if (isSelectedOpacity) Color(0xFF38BDF8) else Color(0xFFE2E8F0),
-                                            fontSize = 10.sp,
-                                            fontWeight = if (isSelectedOpacity) FontWeight.ExtraBold else FontWeight.Medium,
-                                            maxLines = 1,
-                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp)
-                                        )
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    "Voice / Sound" -> {
-                        renderVoiceAndSoundTriggerSection()
-                    }
-
-                    "Style" -> {
-                        val liveBgColor = parseHexColorSafe(bgHex, Color(0xFF334155))
-                        val liveTextColor = parseHexColorSafe(textHex, Color.White)
 
                         // 1. Widget Background Image from Phone Gallery + Live Mini Preview
                         Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {

@@ -148,8 +148,15 @@ public class SoundTriggerPlayer {
                 ttsEngine = new TextToSpeech(appCtx, status -> {
                     if (status == TextToSpeech.SUCCESS && ttsEngine != null) {
                         try {
+                            ttsEngine.setAudioAttributes(
+                                    new AudioAttributes.Builder()
+                                            .setUsage(AudioAttributes.USAGE_MEDIA)
+                                            .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                                            .build()
+                            );
                             ttsEngine.setLanguage(Locale.US);
-                            ttsEngine.setSpeechRate(1.05f);
+                            ttsEngine.setSpeechRate(1.0f);
+                            ttsEngine.setPitch(1.0f);
                             ttsReady = true;
                             if (pendingSpeechText != null) {
                                 ttsEngine.speak(pendingSpeechText, TextToSpeech.QUEUE_FLUSH, null, "studio_voice_trigger");
@@ -172,8 +179,7 @@ public class SoundTriggerPlayer {
         String cleanType = soundType != null ? soundType.trim() : "";
         String cleanCustomPath = customSoundPath != null ? customSoundPath.trim() : "";
 
-        // 1. If a custom voice/sound file is selected and exists on disk, play it when CUSTOM_FILE is selected
-        //    or when a custom file path is present and soundType is empty/default
+        // 1. If a custom voice file is selected, play ONLY the custom voice file (no beep-boop)
         if (!cleanCustomPath.isEmpty()) {
             File audioFile = new File(cleanCustomPath);
             boolean shouldPlayCustom = SOUND_CUSTOM_FILE.equalsIgnoreCase(cleanType)
@@ -188,48 +194,49 @@ public class SoundTriggerPlayer {
             return;
         }
 
-        try {
-            // If user selected CUSTOM_FILE and we didn't return above, try playing custom file directly or fallback to confirm tone
-            if (SOUND_CUSTOM_FILE.equalsIgnoreCase(cleanType) && !cleanCustomPath.isEmpty()) {
-                if (playCustomAudioFile(context, new File(cleanCustomPath))) {
-                    return;
-                }
+        if (SOUND_CUSTOM_FILE.equalsIgnoreCase(cleanType)) {
+            if (!cleanCustomPath.isEmpty()) {
+                playCustomAudioFile(context, new File(cleanCustomPath));
             }
+            return;
+        }
 
-            String upperType = !cleanType.isEmpty() ? cleanType.toUpperCase(Locale.US) : "SYSTEM_CLICK";
+        try {
+            String upperType = !cleanType.isEmpty() ? cleanType.toUpperCase(Locale.US) : "VOICE_ON";
 
-            // 2. Built-in Default Voice Triggers (TTS + Tone confirmation)
+            // 2. Built-in Voice Triggers — Strictly speak voice ONLY (ZERO beep/boop ToneGenerator!)
             switch (upperType) {
                 case "VOICE_ON":
                     speakBuiltInVoice(context, "Option Activated");
-                    break;
+                    return;
                 case "VOICE_OFF":
                     speakBuiltInVoice(context, "Option Deactivated");
-                    break;
+                    return;
                 case "VOICE_HACK_ON":
                     speakBuiltInVoice(context, "Hack Activated");
-                    break;
+                    return;
                 case "VOICE_HACK_OFF":
                     speakBuiltInVoice(context, "Hack Deactivated");
-                    break;
+                    return;
                 case "VOICE_MOD_ON":
                     speakBuiltInVoice(context, "Mod Enabled");
-                    break;
+                    return;
                 case "VOICE_MOD_OFF":
                     speakBuiltInVoice(context, "Mod Disabled");
-                    break;
+                    return;
                 case "ACTIVATE":
                 case "VOICE_APPLIED":
                     speakBuiltInVoice(context, "Target File Patched");
-                    break;
+                    return;
                 case "DEACTIVATE":
                 case "VOICE_RESTORED":
-                    speakBuiltInVoice(context, "Original File Restored");
-                    break;
+                    speakBuiltInVoice(context, "Original Restored");
+                    return;
                 default:
                     break;
             }
 
+            // 3. Only the 4 distinct Click / Beep sounds reach here
             if ((SOUND_CLICK.equalsIgnoreCase(upperType) || "CLICK".equalsIgnoreCase(upperType)) && sourceView != null) {
                 sourceView.playSoundEffect(0);
             }
@@ -237,61 +244,30 @@ public class SoundTriggerPlayer {
             int toneType;
             int durationMs;
             switch (upperType) {
-                case "DIGITAL_BEEP":
-                case "BEEP": {
-                    toneType = ToneGenerator.TONE_PROP_BEEP;
-                    durationMs = 85;
-                    break;
-                }
-                case "CONFIRM_TONE":
-                case "CONFIRM":
-                case "VOICE_ON":
-                case "VOICE_MOD_ON":
-                case "ACTIVATE":
-                case "VOICE_APPLIED": {
-                    toneType = ToneGenerator.TONE_PROP_ACK;
-                    durationMs = 115;
+                case "SYSTEM_CLICK":
+                case "CLICK": {
+                    toneType = ToneGenerator.TONE_PROP_PROMPT;
+                    durationMs = 35;
                     break;
                 }
                 case "SWITCH_POP":
-                case "POP":
-                case "LOCK": {
-                    toneType = ToneGenerator.TONE_PROP_BEEP2;
-                    durationMs = 70;
+                case "POP": {
+                    toneType = ToneGenerator.TONE_CDMA_PIP;
+                    durationMs = 45;
                     break;
                 }
-                case "ALERT_PULSE":
-                case "CYBER_PULSE":
-                case "WARNING": {
-                    toneType = ToneGenerator.TONE_CDMA_ALERT_CALL_GUARD;
-                    durationMs = 150;
+                case "CONFIRM_TONE":
+                case "CONFIRM": {
+                    toneType = ToneGenerator.TONE_PROP_BEEP;
+                    durationMs = 75;
                     break;
                 }
-                case "LASER_ZAP":
-                case "LASER": {
-                    toneType = ToneGenerator.TONE_CDMA_HIGH_L;
-                    durationMs = 100;
-                    break;
-                }
-                case "POWER_UP":
-                case "VOICE_HACK_ON": {
-                    toneType = ToneGenerator.TONE_CDMA_MED_SLS;
-                    durationMs = 135;
-                    break;
-                }
-                case "POWER_DOWN":
-                case "VOICE_OFF":
-                case "VOICE_HACK_OFF":
-                case "VOICE_MOD_OFF":
-                case "DEACTIVATE":
-                case "VOICE_RESTORED": {
-                    toneType = ToneGenerator.TONE_PROP_NACK;
-                    durationMs = 115;
-                    break;
-                }
+                case "DIGITAL_BEEP":
+                case "BEEP":
                 default: {
-                    toneType = ToneGenerator.TONE_PROP_PROMPT;
-                    durationMs = 55;
+                    toneType = ToneGenerator.TONE_PROP_BEEP2;
+                    durationMs = 95;
+                    break;
                 }
             }
             ToneGenerator toneGen = new ToneGenerator(AudioManager.STREAM_MUSIC, 90);
