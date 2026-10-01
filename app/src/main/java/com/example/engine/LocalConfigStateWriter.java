@@ -696,7 +696,8 @@ public class LocalConfigStateWriter {
         }
 
         // 3. Validate Target Path exists (or if restricted Android 13/14/15 path, check Shizuku first)
-        File target = this.resolveTargetFile(fallbackDir, rawTarget);
+        final boolean isCopyMode = byteOffsetHex != null && byteOffsetHex.trim().toUpperCase(Locale.US).contains("COPY");
+        File target = this.resolveEffectiveTargetFile(fallbackDir, rawTarget, rawSource, isCopyMode);
         String absPath = target.getAbsolutePath();
         boolean isRestricted = ShizukuPrivilegeBridge.isRestrictedAndroidPath(absPath);
 
@@ -717,8 +718,8 @@ public class LocalConfigStateWriter {
                     this.notifyDiagnosticWriteError(report);
                     return false;
                 }
-            } else {
-                // Shizuku is ready: verify the target file or its parent directory actually exists
+            } else if (!isCopyMode) {
+                // Shizuku is ready (Replace Mode): verify the target file actually exists
                 File backupDir = new File(fallbackDir, "original_target_backups");
                 String targetHashKey = Integer.toHexString(absPath.hashCode()) + "_" + target.getName().replaceAll("[^a-zA-Z0-9._-]", "_");
                 File markerFile = new File(backupDir, targetHashKey + ".replaced_marker");
@@ -734,7 +735,7 @@ public class LocalConfigStateWriter {
                     return false;
                 }
             }
-        } else {
+        } else if (!isCopyMode) {
             File backupDir = new File(fallbackDir, "original_target_backups");
             String targetHashKey = Integer.toHexString(absPath.hashCode()) + "_" + target.getName().replaceAll("[^a-zA-Z0-9._-]", "_");
             File markerFile = new File(backupDir, targetHashKey + ".replaced_marker");
@@ -755,7 +756,7 @@ public class LocalConfigStateWriter {
                 fallbackDir,
                 safeKey,
                 type,
-                rawTarget,
+                absPath,
                 byteOffsetHex,
                 orig,
                 chg,
@@ -782,7 +783,8 @@ public class LocalConfigStateWriter {
         ConfigParameterSpec.StateSnapshot snapshot;
         long startNs = System.nanoTime();
         int offset = this.parseOffsetString(byteOffsetHex);
-        File target = this.resolveTargetFile(fallbackDir, targetFilePath);
+        boolean isCopyMode = byteOffsetHex != null && byteOffsetHex.trim().toUpperCase(Locale.US).contains("COPY");
+        File target = this.resolveEffectiveTargetFile(fallbackDir, targetFilePath, customSourceFilePath, isCopyMode);
         final String safeKey = widgetKey != null && !widgetKey.trim().isEmpty() ? widgetKey.trim() : (componentLabel != null ? componentLabel : "widget");
         final String orig = originalValue != null ? originalValue : "";
         final String chg = changeValue != null ? changeValue : "";
@@ -804,7 +806,7 @@ public class LocalConfigStateWriter {
                     parent.mkdirs();
                 }
                 String fileReplaceOrMergeSummary = this.tryApplySelectedFileReplaceOrMergeLocked(
-                        fallbackDir, target, safeKey, type, live, isActive, customSourceFilePath
+                        fallbackDir, target, safeKey, type, live, isActive, customSourceFilePath, isCopyMode
                 );
                 if (fileReplaceOrMergeSummary != null) {
                     replacementText = fileReplaceOrMergeSummary;
@@ -847,7 +849,8 @@ public class LocalConfigStateWriter {
                                 replacementText,
                                 isActive,
                                 useTextScriptPatch,
-                                customSourceFilePath
+                                customSourceFilePath,
+                                isCopyMode
                         );
                         replacementText = shizukuResultSummary;
                         this.lastWrittenByWidget.put(safeKey, replacementText);
@@ -906,11 +909,12 @@ public class LocalConfigStateWriter {
             String computedReplacementText,
             boolean isActive,
             boolean useTextScriptPatch,
-            String customSourceFilePath
+            String customSourceFilePath,
+            boolean isCopyMode
     ) throws IOException {
         String absTarget = target.getAbsolutePath();
 
-        // 1. Check if widget(s) have a selected source file for replace/merge
+        // 1. Check if widget(s) have a selected source file for replace/copy/merge
         List<File> activeSourceFiles = this.collectActiveSourceFilesForTargetLocked(
                 fallbackDir, target, safeKey, widgetType, live, isActive, customSourceFilePath
         );
@@ -939,7 +943,7 @@ public class LocalConfigStateWriter {
                         ShizukuPrivilegeBridge.deleteFileViaShizuku(absTarget);
                     }
                     markerFile.delete();
-                    return "Restored Original via Shizuku (" + target.getName() + ")";
+                    return (isCopyMode ? "Removed Copied File via Shizuku (" : "Restored Original via Shizuku (") + target.getName() + ")";
                 }
                 return "Original Kept via Shizuku (" + target.getName() + ")";
             }
@@ -956,7 +960,7 @@ public class LocalConfigStateWriter {
                     } catch (Exception ignored) {
                     }
                 }
-                return "Replaced via Shizuku: " + target.getName() + " <= " + singleSource.getName();
+                return (isCopyMode ? "Copied via Shizuku: " : "Replaced via Shizuku: ") + target.getName() + " <= " + this.extractCleanMainFileName(singleSource.getAbsolutePath());
             }
 
             boolean mergeAsText = this.areAllFilesLikelyTextLocked(activeSourceFiles);
@@ -1158,13 +1162,13 @@ public class LocalConfigStateWriter {
                         spec.customImagePath = explicitSourceFilePath.trim();
                     }
                 }
-                File specTarget = this.resolveTargetFile(fallbackDir, spec.targetFilePath);
-                boolean sameTarget = specTarget.getAbsolutePath().equals(target.getAbsolutePath());
-                if (!sameTarget) continue;
-
                 String srcPath = isCurrentTriggeredWidget && explicitSourceFilePath != null && !explicitSourceFilePath.trim().isEmpty()
                         ? explicitSourceFilePath.trim()
                         : (spec.customImagePath != null ? spec.customImagePath.trim() : "");
+                boolean specCopyMode = spec.byteOffsetHex != null && spec.byteOffsetHex.trim().toUpperCase(Locale.US).contains("COPY");
+                File specTarget = this.resolveEffectiveTargetFile(fallbackDir, spec.targetFilePath, srcPath, specCopyMode);
+                boolean sameTarget = specTarget.getAbsolutePath().equals(target.getAbsolutePath()) || isCurrentTriggeredWidget;
+                if (!sameTarget) continue;
                 if (srcPath.isEmpty()) continue;
                 File srcFile = new File(srcPath);
                 if (!srcFile.exists() || !srcFile.isFile()) continue;
@@ -1206,7 +1210,44 @@ public class LocalConfigStateWriter {
         return activeSourceFiles;
     }
 
-    private String tryApplySelectedFileReplaceOrMergeLocked(File fallbackDir, File target, String safeKey, String widgetType, String liveValue, boolean isActive, String explicitSourceFilePath) throws IOException {
+    private String extractCleanMainFileName(String rawSourcePath) {
+        if (rawSourcePath == null || rawSourcePath.trim().isEmpty()) {
+            return "copied_file.bin";
+        }
+        String name = new File(rawSourcePath.trim()).getName();
+        if (name.startsWith("src_")) {
+            int first = name.indexOf('_');
+            if (first >= 0) {
+                int second = name.indexOf('_', first + 1);
+                if (second >= 0) {
+                    int third = name.indexOf('_', second + 1);
+                    if (third >= 0 && third + 1 < name.length()) {
+                        return name.substring(third + 1);
+                    }
+                }
+            }
+        }
+        return name.isEmpty() ? "copied_file.bin" : name;
+    }
+
+    private File resolveEffectiveTargetFile(File fallbackDir, String rawTarget, String rawSource, boolean isCopyMode) {
+        File baseTarget = this.resolveTargetFile(fallbackDir, rawTarget);
+        String trimmedTarget = rawTarget != null ? rawTarget.trim() : "";
+        String cleanMainName = this.extractCleanMainFileName(rawSource);
+        if (trimmedTarget.endsWith("/") || trimmedTarget.endsWith("\\") || (baseTarget.exists() && baseTarget.isDirectory())) {
+            return new File(baseTarget, cleanMainName);
+        }
+        if (isCopyMode && rawSource != null && !rawSource.trim().isEmpty()) {
+            // In Copy mode, if the target path has no file extension (e.g. /storage/emulated/0/Download/MyFolder) and doesn't exist as a file yet, treat it as a destination folder
+            String lastSegment = baseTarget.getName();
+            if (!baseTarget.exists() && !lastSegment.contains(".")) {
+                return new File(baseTarget, cleanMainName);
+            }
+        }
+        return baseTarget;
+    }
+
+    private String tryApplySelectedFileReplaceOrMergeLocked(File fallbackDir, File target, String safeKey, String widgetType, String liveValue, boolean isActive, String explicitSourceFilePath, boolean isCopyMode) throws IOException {
         List<File> activeSourceFiles = this.collectActiveSourceFilesForTargetLocked(
                 fallbackDir, target, safeKey, widgetType, liveValue, isActive, explicitSourceFilePath
         );
@@ -1231,13 +1272,13 @@ public class LocalConfigStateWriter {
         File backupFile = new File(backupDir, targetHashKey + ".orig_backup");
         File markerFile = new File(backupDir, targetHashKey + ".replaced_marker");
 
-        // Back up the original file at target path before replacing/merging it for the first time
+        // Back up the original file at target path before replacing/copying/merging it for the first time
         if (target.exists() && target.isFile() && !markerFile.exists()) {
             this.copyRawFileBytesLocked(target, backupFile);
         }
 
         if (activeSourceFiles.isEmpty()) {
-            // All options turned OFF: restore original target file if backed up
+            // All options turned OFF: restore original target file if backed up, or remove copied file
             if (markerFile.exists()) {
                 if (target.exists() && !target.delete()) {
                     throw new IOException("Cannot delete modified target file at " + target.getAbsolutePath());
@@ -1247,12 +1288,12 @@ public class LocalConfigStateWriter {
                     backupFile.delete();
                 }
                 markerFile.delete();
-                return "Restored Original (" + target.getName() + ")";
+                return (isCopyMode ? "Removed Copied (" : "Restored Original (") + target.getName() + ")";
             }
             return "Original Kept (" + target.getName() + ")";
         }
 
-        // Remove the original file at the target path so selected file(s) replace/merge with the exact same target name
+        // Remove the existing file at the target path before writing replacement/copied file
         if (target.exists() && !target.delete()) {
             throw new IOException("open failed: EACCES (Permission denied) deleting " + target.getAbsolutePath());
         }
@@ -1266,7 +1307,7 @@ public class LocalConfigStateWriter {
                 } catch (Exception ignored) {
                 }
             }
-            return "Replaced " + target.getName() + " <= " + singleSource.getName();
+            return (isCopyMode ? "Copied " : "Replaced ") + target.getName() + " <= " + this.extractCleanMainFileName(singleSource.getAbsolutePath());
         }
 
         // Multiple options ON: merge all selected files into target path with the exact same target filename

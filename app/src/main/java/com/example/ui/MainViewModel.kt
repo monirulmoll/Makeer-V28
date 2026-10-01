@@ -493,11 +493,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 updatedAt = System.currentTimeMillis()
             )
             studioDao.updateProject(updated)
+            exportProjectToErrorStudioFolder(updated, activeComponents.value)
             _uiState.update { state ->
                 state.copy(
                     activeProject = updated,
                     customEditedKotlinFiles = emptyMap(),
-                    statusToast = "Saved Floating Window Name & Image."
+                    statusToast = "Saved App & Floating Window Name & Icon."
                 )
             }
             DynamicOverlayRegistry.updateActiveOverlay(
@@ -526,6 +527,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     /**
      * Copies a user-picked App Logo image from the Android Photo Picker into local app storage
+     * (normalizing it to a valid 512x512 PNG so APK icon replacement and preview always succeed)
      * and invokes [onResult] with its absolute file path.
      */
     fun importProjectLogoUri(uri: Uri, onResult: (String) -> Unit) {
@@ -534,9 +536,25 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 val destPath = withContext(Dispatchers.IO) {
                     val logoDir = File(appContext.filesDir, "project_logos").apply { mkdirs() }
                     val destFile = File(logoDir, "app_logo_${System.currentTimeMillis()}.png")
-                    appContext.contentResolver.openInputStream(uri)?.use { input ->
-                        FileOutputStream(destFile).use { output ->
-                            input.copyTo(output)
+                    val rawBytes = appContext.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+                    if (rawBytes != null && rawBytes.isNotEmpty()) {
+                        val decoded = android.graphics.BitmapFactory.decodeByteArray(rawBytes, 0, rawBytes.size)
+                        if (decoded != null && decoded.width > 0 && decoded.height > 0) {
+                            val targetSize = 512
+                            val scale = maxOf(targetSize.toFloat() / decoded.width.toFloat(), targetSize.toFloat() / decoded.height.toFloat())
+                            val scaledW = maxOf(targetSize, Math.round(decoded.width * scale))
+                            val scaledH = maxOf(targetSize, Math.round(decoded.height * scale))
+                            val scaled = android.graphics.Bitmap.createScaledBitmap(decoded, scaledW, scaledH, true)
+                            val cropX = maxOf(0, (scaledW - targetSize) / 2)
+                            val cropY = maxOf(0, (scaledH - targetSize) / 2)
+                            val cropped = android.graphics.Bitmap.createBitmap(scaled, cropX, cropY, targetSize, targetSize)
+                            FileOutputStream(destFile).use { output ->
+                                cropped.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, output)
+                            }
+                        } else {
+                            FileOutputStream(destFile).use { output ->
+                                output.write(rawBytes)
+                            }
                         }
                     }
                     destFile.absolutePath

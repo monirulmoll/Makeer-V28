@@ -260,15 +260,13 @@ private fun EditProjectNameAndLogoDialog(
         if (uri != null) {
             onImportLogoUri(uri) { savedPath ->
                 editedFloatingLogoPath = savedPath
-                if (editedAppLogoPath.isBlank()) {
-                    editedAppLogoPath = savedPath
-                }
+                editedAppLogoPath = savedPath
             }
         }
     }
 
-    val previewLogoBitmap = remember(editedFloatingLogoPath, editedAppLogoPath) {
-        val pathToLoad = editedFloatingLogoPath.ifBlank { editedAppLogoPath }
+    val previewLogoBitmap = remember(editedAppLogoPath, editedFloatingLogoPath) {
+        val pathToLoad = editedAppLogoPath.ifBlank { editedFloatingLogoPath }
         if (pathToLoad.isNotBlank()) {
             val f = File(pathToLoad)
             if (f.exists()) BitmapFactory.decodeFile(f.absolutePath)?.asImageBitmap() else null
@@ -1159,7 +1157,7 @@ private fun DarkProjectListCard(
     onDelete: () -> Unit
 ) {
     var menuExpanded by remember { mutableStateOf(false) }
-    val itemLogoPath = project.floatingLogoPath.ifBlank { project.appLogoPath }
+    val itemLogoPath = project.appLogoPath.ifBlank { project.floatingLogoPath }
     val itemLogoBitmap = remember(itemLogoPath) {
         if (itemLogoPath.isNotBlank()) {
             val f = File(itemLogoPath)

@@ -164,8 +164,10 @@ public final class ApkCompilationEngine {
         }
         String compiledPackageName = ApkCompilationEngine.getCompiledAppPackageName(project);
         String compiledAppName = project.getName() != null && !project.getName().trim().isEmpty() ? project.getName().trim() : " ";
-        String customAppLogoPath = project.getAppLogoPath() != null ? project.getAppLogoPath().trim() : "";
-        String string = customFloatingLogoPath = project.getFloatingLogoPath() != null ? project.getFloatingLogoPath().trim() : "";
+        String rawAppLogo = project.getAppLogoPath() != null ? project.getAppLogoPath().trim() : "";
+        String rawFloatingLogo = project.getFloatingLogoPath() != null ? project.getFloatingLogoPath().trim() : "";
+        String customAppLogoPath = !rawAppLogo.isEmpty() ? rawAppLogo : rawFloatingLogo;
+        String string = customFloatingLogoPath = !rawFloatingLogo.isEmpty() ? rawFloatingLogo : rawAppLogo;
         String customCanvasBgImagePath = project.getCanvasBgImagePath() != null ? project.getCanvasBgImagePath().trim() : "";
         if (baseApkFile != null && baseApkFile.exists() && baseApkFile.length() > 100000L) {
             File unsignedMergedApk = new File(workDir, "unsigned_merged.apk");
@@ -199,7 +201,8 @@ public final class ApkCompilationEngine {
     }
 
     private static void buildAlignedUnsignedApkFromBase(@NonNull File baseApkFile, @NonNull File outUnsignedApk, @NonNull Map<String, String> blueprintFiles, @NonNull List<CanvasComponentEntity> components, @NonNull String compiledPackageName, @NonNull String compiledAppName, @NonNull String customAppLogoPath, @NonNull String customFloatingLogoPath, @NonNull String customCanvasBgImagePath, int canvasWidthDp, int canvasHeightDp) throws IOException {
-        byte[] replacementIconPng = ApkCompilationEngine.buildLauncherIconPngBytes(customAppLogoPath);
+        byte[] replacementIconPng = ApkCompilationEngine.buildLauncherIconBytes(customAppLogoPath, false);
+        byte[] replacementIconJpg = ApkCompilationEngine.buildLauncherIconBytes(customAppLogoPath, true);
         HashSet<String> writtenEntries = new HashSet<String>();
         try (ZipFile baseZip = new ZipFile(baseApkFile);
              FileOutputStream fos = new FileOutputStream(outUnsignedApk);
@@ -237,8 +240,12 @@ public final class ApkCompilationEngine {
                 }
                 if ("AndroidManifest.xml".equals(name)) {
                     entryBytes = ApkCompilationEngine.patchBinaryAndroidManifest(entryBytes, compiledPackageName, compiledAppName);
-                } else if (replacementIconPng != null && name.startsWith("res/") && name.endsWith(".png") && name.contains("ic_launcher")) {
-                    entryBytes = replacementIconPng;
+                } else if (replacementIconPng != null && name.startsWith("res/") && (name.contains("ic_launcher") || name.contains("img_app_icon")) && (name.endsWith(".png") || name.endsWith(".jpg") || name.endsWith(".jpeg") || name.endsWith(".webp"))) {
+                    if ((name.endsWith(".jpg") || name.endsWith(".jpeg")) && replacementIconJpg != null) {
+                        entryBytes = replacementIconJpg;
+                    } else {
+                        entryBytes = replacementIconPng;
+                    }
                 }
                 ZipEntry newEntry = new ZipEntry(name);
                 newEntry.setMethod(8);
@@ -618,20 +625,35 @@ public final class ApkCompilationEngine {
     }
 
     @Nullable
-    private static byte[] buildLauncherIconPngBytes(@NonNull String customAppLogoPath) {
+    private static byte[] buildLauncherIconBytes(@NonNull String customAppLogoPath, boolean asJpeg) {
         try {
-            Bitmap decoded;
-            File f;
-            Bitmap iconBitmap = null;
-            if (!customAppLogoPath.trim().isEmpty() && (f = new File(customAppLogoPath.trim())).exists() && f.isFile() && (decoded = BitmapFactory.decodeFile((String)f.getAbsolutePath())) != null) {
-                iconBitmap = Bitmap.createScaledBitmap((Bitmap)decoded, (int)192, (int)192, (boolean)true);
+            if (customAppLogoPath.trim().isEmpty()) {
+                return null;
             }
-            if (iconBitmap == null) {
-                iconBitmap = Bitmap.createBitmap((int)192, (int)192, (Bitmap.Config)Bitmap.Config.ARGB_8888);
-                iconBitmap.eraseColor(0);
+            File f = new File(customAppLogoPath.trim());
+            if (!f.exists() || !f.isFile()) {
+                return null;
             }
+            Bitmap decoded = BitmapFactory.decodeFile(f.getAbsolutePath());
+            if (decoded == null || decoded.getWidth() <= 0 || decoded.getHeight() <= 0) {
+                return null;
+            }
+            int targetSize = asJpeg ? 512 : 384;
+            float scale = Math.max((float) targetSize / (float) decoded.getWidth(), (float) targetSize / (float) decoded.getHeight());
+            int scaledW = Math.max(targetSize, Math.round((float) decoded.getWidth() * scale));
+            int scaledH = Math.max(targetSize, Math.round((float) decoded.getHeight() * scale));
+            Bitmap scaled = Bitmap.createScaledBitmap(decoded, scaledW, scaledH, true);
+            int cropX = Math.max(0, (scaledW - targetSize) / 2);
+            int cropY = Math.max(0, (scaledH - targetSize) / 2);
+            Bitmap cropped = Bitmap.createBitmap(scaled, cropX, cropY, targetSize, targetSize);
+            Bitmap outputBitmap = Bitmap.createBitmap(targetSize, targetSize, Bitmap.Config.ARGB_8888);
+            android.graphics.Canvas canvas = new android.graphics.Canvas(outputBitmap);
+            if (asJpeg) {
+                canvas.drawColor(0xFF0F172A);
+            }
+            canvas.drawBitmap(cropped, 0.0f, 0.0f, null);
             ByteArrayOutputStream baos = new ByteArrayOutputStream();
-            iconBitmap.compress(Bitmap.CompressFormat.PNG, 100, (OutputStream)baos);
+            outputBitmap.compress(asJpeg ? Bitmap.CompressFormat.JPEG : Bitmap.CompressFormat.PNG, asJpeg ? 95 : 100, (OutputStream) baos);
             return baos.toByteArray();
         }
         catch (Exception e) {

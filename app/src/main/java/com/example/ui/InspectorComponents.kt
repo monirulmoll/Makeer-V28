@@ -36,12 +36,14 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.CreateNewFolder
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Security
+import androidx.compose.material.icons.filled.SyncAlt
 import androidx.compose.material.icons.filled.Token
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -306,7 +308,8 @@ fun ComponentPropertyInspectorSheet(
         overrideCustomSoundPath: String = customSoundPath,
         overrideOffSoundTrigger: String = offSoundTrigger,
         overrideOffCustomSoundPath: String = offCustomSoundPath,
-        overrideLinkUrl: String = linkUrl
+        overrideLinkUrl: String = linkUrl,
+        overrideByteOffsetHex: String = byteOffset
     ): CanvasComponentEntity {
         return component.copy(
             label = label.trim().ifEmpty { component.label },
@@ -316,7 +319,7 @@ fun ComponentPropertyInspectorSheet(
             posYDp = posY.toIntOrNull()?.coerceAtLeast(0) ?: component.posYDp,
             widthDp = widthDp.toIntOrNull()?.coerceIn(36, 400) ?: component.widthDp,
             heightDp = heightDp.toIntOrNull()?.coerceIn(28, 300) ?: component.heightDp,
-            byteOffsetHex = byteOffset.trim().ifEmpty { "0x04" },
+            byteOffsetHex = overrideByteOffsetHex.trim().ifEmpty { "REPLACE" },
             onPayloadHex = onPayload.trim().ifEmpty { "On" },
             offPayloadHex = offPayload.trim().ifEmpty { "Off" },
             bgColorHex = overrideBgHex.trim().ifEmpty { "#131C33" },
@@ -453,6 +456,17 @@ fun ComponentPropertyInspectorSheet(
     // Directory icon on "Target Path" selects the destination target file path
     val targetDocumentPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri != null) {
+            val resolvedPath = resolveDocumentUriToStoragePath(uri, targetFile)
+            targetFile = resolvedPath
+            onSaveComponent(buildUpdated().copy(targetFilePath = resolvedPath.trim()))
+        }
+    }
+
+    // Folder picker for Copy mode so users can directly pick a Target Folder
+    val targetFolderPickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocumentTree()
     ) { uri ->
         if (uri != null) {
             val resolvedPath = resolveDocumentUriToStoragePath(uri, targetFile)
@@ -1097,8 +1111,116 @@ fun ComponentPropertyInspectorSheet(
                         }
 
                         // EXECUTABLE WIDGETS ONLY (SWITCH, BUTTON, SLIDER 0-100, EDIT TEXT):
-                        // 2. Select your main file & 3. Target Path + Live Validation Error Box
+                        // Action Mode (Replace / Copy) + 2. Select your main file & 3. Target Path + Live Validation Error Box
                         if (isExecutableFileWidget) {
+                            val isCopyActionMode = byteOffset.trim().equals("COPY", ignoreCase = true)
+
+                            // Action Mode Selector: Replace vs Copy
+                            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Text(
+                                    text = "Action Mode (Replace / Copy)",
+                                    color = Color(0xFFCBD5E1),
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    // Option 1: Replace
+                                    Surface(
+                                        shape = RoundedCornerShape(12.dp),
+                                        color = if (!isCopyActionMode) InspectorPurpleButton else InspectorFieldBg,
+                                        border = BorderStroke(
+                                            1.5.dp,
+                                            if (!isCopyActionMode) Color(0xFF60A5FA) else InspectorFieldBorder
+                                        ),
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .clickable {
+                                                byteOffset = "REPLACE"
+                                                onSaveComponent(buildUpdated(overrideByteOffsetHex = "REPLACE"))
+                                            }
+                                            .testTag("inspector_mode_replace_button")
+                                    ) {
+                                        Column(
+                                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                                            verticalArrangement = Arrangement.spacedBy(2.dp)
+                                        ) {
+                                            Row(
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Default.SyncAlt,
+                                                    contentDescription = "Replace",
+                                                    tint = Color.White,
+                                                    modifier = Modifier.size(15.dp)
+                                                )
+                                                Text(
+                                                    text = "Replace",
+                                                    color = Color.White,
+                                                    fontSize = 12.sp,
+                                                    fontWeight = FontWeight.ExtraBold
+                                                )
+                                            }
+                                            Text(
+                                                text = "Target file ko Main file se replace karega",
+                                                color = if (!isCopyActionMode) Color(0xFFE0E7FF) else Color(0xFF94A3B8),
+                                                fontSize = 9.5.sp,
+                                                lineHeight = 12.sp
+                                            )
+                                        }
+                                    }
+
+                                    // Option 2: Copy
+                                    Surface(
+                                        shape = RoundedCornerShape(12.dp),
+                                        color = if (isCopyActionMode) InspectorPurpleButton else InspectorFieldBg,
+                                        border = BorderStroke(
+                                            1.5.dp,
+                                            if (isCopyActionMode) Color(0xFF60A5FA) else InspectorFieldBorder
+                                        ),
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .clickable {
+                                                byteOffset = "COPY"
+                                                onSaveComponent(buildUpdated(overrideByteOffsetHex = "COPY"))
+                                            }
+                                            .testTag("inspector_mode_copy_button")
+                                    ) {
+                                        Column(
+                                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                                            verticalArrangement = Arrangement.spacedBy(2.dp)
+                                        ) {
+                                            Row(
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Default.ContentCopy,
+                                                    contentDescription = "Copy",
+                                                    tint = Color.White,
+                                                    modifier = Modifier.size(15.dp)
+                                                )
+                                                Text(
+                                                    text = "Copy",
+                                                    color = Color.White,
+                                                    fontSize = 12.sp,
+                                                    fontWeight = FontWeight.ExtraBold
+                                                )
+                                            }
+                                            Text(
+                                                text = "Main file ko Target path par copy karega",
+                                                color = if (isCopyActionMode) Color(0xFFE0E7FF) else Color(0xFF94A3B8),
+                                                fontSize = 9.5.sp,
+                                                lineHeight = 12.sp
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+
                             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                                 Text(
                                     text = "Select your main file",
@@ -1164,7 +1286,7 @@ fun ComponentPropertyInspectorSheet(
                             // 3. Target Path
                             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                                 Text(
-                                    text = "Target Path",
+                                    text = if (isCopyActionMode) "Target Path (Folder or File Path to Copy Into)" else "Target Path (Target File to Replace)",
                                     color = Color(0xFFCBD5E1),
                                     fontSize = 11.sp,
                                     fontWeight = FontWeight.Bold
@@ -1182,7 +1304,7 @@ fun ComponentPropertyInspectorSheet(
                                         },
                                         placeholder = {
                                             Text(
-                                                "/storage/emulated/0/Android/data/...",
+                                                if (isCopyActionMode) "/storage/emulated/0/Download/..." else "/storage/emulated/0/Android/data/...",
                                                 color = InspectorPlaceholderColor,
                                                 fontSize = 12.sp
                                             )
@@ -1201,6 +1323,27 @@ fun ComponentPropertyInspectorSheet(
                                             .weight(1f)
                                             .testTag("inspector_target_path_input")
                                     )
+
+                                    if (isCopyActionMode) {
+                                        Box(
+                                            modifier = Modifier
+                                                .size(46.dp)
+                                                .clip(RoundedCornerShape(12.dp))
+                                                .background(Color(0xFF0284C7))
+                                                .clickable {
+                                                    targetFolderPickerLauncher.launch(null)
+                                                }
+                                                .testTag("inspector_select_target_folder_button"),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Icon(
+                                                imageVector = Icons.Default.CreateNewFolder,
+                                                contentDescription = "Select Target Folder",
+                                                tint = Color.White,
+                                                modifier = Modifier.size(20.dp)
+                                            )
+                                        }
+                                    }
 
                                     Box(
                                         modifier = Modifier
@@ -1231,28 +1374,32 @@ fun ComponentPropertyInspectorSheet(
                                 val shizukuReady = ShizukuPrivilegeBridge.isShizukuReady()
                                 val shizukuStatusText = ShizukuPrivilegeBridge.getStatusSummary(context)
 
-                                val validationErrorMessage: String? = remember(cleanTarget, cleanMain, component.type) {
+                                val validationErrorMessage: String? = remember(cleanTarget, cleanMain, component.type, isCopyActionMode) {
                                     val needsMainFile = component.type == "TOGGLE" || component.type == "BUTTON"
                                     val mainMissing = needsMainFile && (cleanMain.isEmpty() || !File(cleanMain).exists())
                                     val targetMissing = cleanTarget.isEmpty()
                                     when {
                                         mainMissing && targetMissing ->
-                                            "⚠️ Main File & Target Path Dono Missing Hain: Aapne na replacement Main File select ki hai aur na hi Target Path dala hai. Floating window me ye widget ON karne par fail hoga."
+                                            "⚠️ Main File & Target Path Dono Missing Hain: Aapne na Main File select ki hai aur na hi Target Path dala hai. Floating window me ye widget ON karne par fail hoga."
                                         mainMissing ->
-                                            "⚠️ Main File Select Nhi Ki Gayi: Upar 'Select your main file' me wo file select karein jo Target Path wali file se replace hogi."
+                                            if (isCopyActionMode) {
+                                                "⚠️ Main File Select Nhi Ki Gayi: Upar 'Select your main file' me wo file select karein jo Target Path par copy hogi."
+                                            } else {
+                                                "⚠️ Main File Select Nhi Ki Gayi: Upar 'Select your main file' me wo file select karein jo Target Path wali file ko replace karegi."
+                                            }
                                         targetMissing ->
-                                            "⚠️ Target Path Nhi Dala Hua: Target Path khali hai. Jis path par file change karni hai wo path dalein."
+                                            "⚠️ Target Path Nhi Dala Hua: Target Path khali hai. Jis path par file ${if (isCopyActionMode) "copy" else "replace"} karni hai wo path dalein."
                                         !cleanTarget.startsWith("/") ->
                                             "⚠️ Galat Target Path: '$cleanTarget' sahi path nhi hai. Path '/' se shuru hona chahiye (jaise /storage/emulated/0/...)."
-                                        !isRestrictedAndroidPath -> {
+                                        !isRestrictedAndroidPath && !isCopyActionMode -> {
                                             val tf = File(cleanTarget)
                                             val parent = tf.parentFile
                                             if (parent == null || !parent.exists()) {
                                                 "⚠️ Target Folder Exist Nhi Karta: '${parent?.absolutePath ?: cleanTarget}' aapke device me mojood nhi hai."
                                             } else if (!tf.exists()) {
-                                                "⚠️ Target File Exist Nhi Karta: '$cleanTarget' is path par abhi koi file mojood nhi hai."
+                                                "⚠️ Target File Exist Nhi Karta: '$cleanTarget' is path par abhi koi file mojood nhi hai (Agar nayi file copy karni hai toh upar 'Copy' select karein)."
                                             } else if (tf.isDirectory) {
-                                                "⚠️ Target Path Ek Folder Hai: '$cleanTarget' folder hai, kisi file ka pura path dalein."
+                                                "⚠️ Target Path Ek Folder Hai: '$cleanTarget' folder hai. Folder me file copy karne ke liye upar 'Copy' option select karein, ya Replace ke liye file ka pura path dalein."
                                             } else {
                                                 null
                                             }
@@ -1324,8 +1471,10 @@ fun ComponentPropertyInspectorSheet(
                                                 Text(
                                                     text = if (isRestrictedAndroidPath) {
                                                         "Android 15 Restricted Path (Shizuku Required)"
+                                                    } else if (isCopyActionMode) {
+                                                        "Executes Only in Floating Window (ON=Copy to Target, OFF=Remove/Restore)"
                                                     } else {
-                                                        "Executes Only in Floating Window (ON=Replace, OFF=Restore)"
+                                                        "Executes Only in Floating Window (ON=Replace Target, OFF=Restore)"
                                                     },
                                                     color = Color.White,
                                                     fontSize = 10.5.sp,
