@@ -575,29 +575,19 @@ fun CompiledStandaloneAppScreen(
                             }
                         }
 
-                        OutlinedButton(
-                            onClick = {
-                                onTestAllTargetPaths()
-                            },
-                            border = BorderStroke(1.dp, Color(0xFF38BDF8)),
-                            shape = RoundedCornerShape(12.dp),
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(46.dp)
-                                .testTag("standalone_test_target_path_button")
+                        Surface(
+                            shape = RoundedCornerShape(10.dp),
+                            color = Color(0xFF0C1E38),
+                            border = BorderStroke(1.dp, Color(0xFF38BDF8).copy(alpha = 0.4f)),
+                            modifier = Modifier.fillMaxWidth()
                         ) {
-                            Icon(
-                                imageVector = Icons.Default.Security,
-                                contentDescription = "Test Target Path File Change",
-                                tint = Color(0xFF38BDF8),
-                                modifier = Modifier.size(18.dp)
-                            )
-                            Spacer(Modifier.width(8.dp))
                             Text(
-                                text = "TEST TARGET PATH FILE CHANGE (DIRECT / SHIZUKU)",
-                                color = Color(0xFFE0F2FE),
+                                text = "Tap START to launch the Floating Window. Target file replacement runs only when you turn ON a widget option inside the floating window, and automatically restores the original file when turned OFF.",
+                                color = Color(0xFFBAE6FD),
                                 fontSize = 11.sp,
-                                fontWeight = FontWeight.ExtraBold
+                                fontWeight = FontWeight.SemiBold,
+                                textAlign = TextAlign.Center,
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp)
                             )
                         }
 

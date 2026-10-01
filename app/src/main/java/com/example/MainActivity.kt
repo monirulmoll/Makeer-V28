@@ -143,21 +143,6 @@ class MainActivity : ComponentActivity() {
                 val components by viewModel.activeComponents.collectAsStateWithLifecycle()
                 val bundledStandaloneComponents by viewModel.bundledStandaloneComponents.collectAsStateWithLifecycle()
 
-                uiState.activeWriteErrorReport?.let { errorReport ->
-                    TargetWriteErrorShizukuDialog(
-                        report = errorReport,
-                        shizukuStatusSummary = uiState.shizukuStatusSummary,
-                        isShizukuReady = uiState.isShizukuReady,
-                        isShizukuRunning = uiState.isShizukuRunning,
-                        onDismiss = viewModel::dismissWriteErrorDialog,
-                        onConnectOrAuthorizeShizuku = viewModel::requestOrLaunchShizuku,
-                        onOpenShizukuApp = {
-                            ShizukuPrivilegeBridge.openOrDownloadShizukuApp(this@MainActivity)
-                        },
-                        onRetryWrite = viewModel::retryFailedTargetWrite
-                    )
-                }
-
                 when (uiState.destination) {
                     StudioDestination.WELCOME_SCREEN -> {
                         StudioWelcomeModeScreen(
@@ -186,6 +171,8 @@ class MainActivity : ComponentActivity() {
                             onDismissEditProjectDialog = { viewModel.openEditProjectDialog(null) },
                             onSaveProjectConfiguration = viewModel::updateProjectNameAndLogo,
                             onImportLogoUri = viewModel::importProjectLogoUri,
+                            onSyncErrorStudioFolder = viewModel::syncAndImportProjectsFromErrorStudioFolder,
+                            onImportProjectUri = viewModel::importProjectFromUri,
                             onRefreshPermissions = viewModel::refreshOverlayPermission,
                             onOpenOnlineAiMode = viewModel::openOnlineAiMode,
                             onBackToWelcome = viewModel::navigateBackToWelcome
@@ -1743,34 +1730,6 @@ fun StudioCanvasBuilderScreen(
                             Text(
                                 text = if (uiState.isShizukuReady) "Shizuku ✓" else "Shizuku Fix",
                                 color = Color.White,
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.SemiBold
-                            )
-                        }
-                    }
-
-                    Surface(
-                        shape = RoundedCornerShape(10.dp),
-                        color = Color(0xFF0B253A),
-                        border = BorderStroke(1.dp, Color(0xFF38BDF8)),
-                        modifier = Modifier
-                            .clickable { onTestAllTargetPaths() }
-                            .testTag("studio_test_target_paths_button")
-                    ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(5.dp)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.PlayArrow,
-                                contentDescription = "Test Target Path File Change",
-                                tint = Color(0xFF38BDF8),
-                                modifier = Modifier.size(14.dp)
-                            )
-                            Text(
-                                text = "Test Target",
-                                color = Color(0xFFE0F2FE),
                                 fontSize = 11.sp,
                                 fontWeight = FontWeight.SemiBold
                             )

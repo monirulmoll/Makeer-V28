@@ -122,17 +122,21 @@ extends Service {
     private static final Object OVERLAY_LOCK = new Object();
     private static volatile boolean running = false;
     private static View sActiveFloatingRootView = null;
-    private static View sActiveErrorDialogView = null;
     private static WindowManager sActiveWindowManager = null;
     private WindowManager windowManager;
     private View floatingRootView;
     private WindowManager.LayoutParams overlayLayoutParams;
     private TextView shizukuHeaderBadgeTv;
 
+    private static volatile boolean mainActivityVisible = false;
+
+    public static void setMainActivityVisible(boolean visible) {
+        mainActivityVisible = visible;
+    }
+
     private final LocalConfigStateWriter.OnStateWriteListener floatingWriteListener = new LocalConfigStateWriter.OnStateWriteListener() {
         @Override
         public void onWriteSuccess(String key, int offset, String oldVal, String newVal, long durationMicros, ConfigParameterSpec.StateSnapshot snapshot) {
-            FloatingDashboardService.this.refreshShizukuHeaderBadge();
             if (newVal != null && (newVal.contains("[Shizuku]") || newVal.contains("via Shizuku") || newVal.startsWith("Replaced") || newVal.startsWith("Merged") || newVal.startsWith("Restored"))) {
                 Toast.makeText(FloatingDashboardService.this, "\u2713 Target File Changed: " + newVal, Toast.LENGTH_SHORT).show();
             }
@@ -144,15 +148,11 @@ extends Service {
 
         @Override
         public void onWriteDiagnosticError(LocalConfigStateWriter.WriteDiagnosticReport report) {
-            FloatingDashboardService.this.refreshShizukuHeaderBadge();
-            FloatingDashboardService.this.showFloatingErrorDiagnosticDialog(report);
+            // Error diagnostic floating window completely removed as requested by user
         }
     };
 
     private final ShizukuPrivilegeBridge.OnShizukuStateChangeListener shizukuStateListener = (binderAlive, permissionGranted, uid) -> {
-        if (this.floatingRootView != null) {
-            this.floatingRootView.post(this::refreshShizukuHeaderBadge);
-        }
     };
 
     public static boolean isRunning() {
@@ -338,37 +338,6 @@ extends Service {
         }
         int pillFillColor = useLightHeaderContent ? Color.parseColor((String)"#2EFFFFFF") : Color.parseColor((String)"#140F172A");
 
-        TextView shzBadge = new TextView((Context)this);
-        shzBadge.setTextSize(2, 8.0f);
-        shzBadge.setTypeface(Typeface.DEFAULT_BOLD);
-        shzBadge.setSingleLine(true);
-        shzBadge.setGravity(17);
-        shzBadge.setPadding(this.dpToPx(5), this.dpToPx(3), this.dpToPx(5), this.dpToPx(3));
-        LinearLayout.LayoutParams shzLp = new LinearLayout.LayoutParams(-2, -2);
-        shzLp.rightMargin = this.dpToPx(4);
-        this.shizukuHeaderBadgeTv = shzBadge;
-        this.refreshShizukuHeaderBadge();
-        shzBadge.setOnClickListener(v -> {
-            Context appCtx = this.getApplicationContext();
-            ShizukuPrivilegeBridge.probeShizukuBinder(appCtx);
-            if (ShizukuPrivilegeBridge.isShizukuReady(appCtx)) {
-                Toast.makeText((Context)this, (CharSequence)("Shizuku Active (" + ShizukuPrivilegeBridge.getStatusSummary(appCtx) + "). Testing target path..."), (int)0).show();
-                LocalConfigStateWriter.getInstance().runFloatStartupTargetTestAndApplyAsync(appCtx, this.getFilesDir(), DynamicOverlayRegistry.getActiveItems());
-            } else if (ShizukuPrivilegeBridge.isShizukuRunning(appCtx)) {
-                Toast.makeText((Context)this, (CharSequence)"Requesting Shizuku permission for restricted path access...", (int)0).show();
-                ShizukuPrivilegeBridge.requestShizukuPermission(appCtx, 9401);
-            } else {
-                LocalConfigStateWriter.WriteDiagnosticReport lastErr = LocalConfigStateWriter.getInstance().getLastDiagnosticReport();
-                if (lastErr != null) {
-                    this.showFloatingErrorDiagnosticDialog(lastErr);
-                } else {
-                    LocalConfigStateWriter.getInstance().runFloatStartupTargetTestAndApplyAsync(appCtx, this.getFilesDir(), DynamicOverlayRegistry.getActiveItems());
-                }
-            }
-            this.refreshShizukuHeaderBadge();
-        });
-        header.addView((View)shzBadge, (ViewGroup.LayoutParams)shzLp);
-
         TextView minimizeBtn = new TextView((Context)this);
         minimizeBtn.setText((CharSequence)"Minimize");
         minimizeBtn.setTextColor(headerContentColor);
@@ -535,9 +504,62 @@ extends Service {
                 return false;
             }
         });
+        final int[] liveWinSizePx = new int[]{currentCanvasW, currentCanvasH};
         container.addView((View)header, (ViewGroup.LayoutParams)new LinearLayout.LayoutParams(-1, -2));
         container.addView((View)canvasFrame, (ViewGroup.LayoutParams)canvasLp);
-        panelRoot.addView((View)container, (ViewGroup.LayoutParams)new FrameLayout.LayoutParams(currentCanvasW, currentCanvasH));
+        panelRoot.addView((View)container, (ViewGroup.LayoutParams)new FrameLayout.LayoutParams(-1, -1));
+
+        // Bottom-right corner resize grip so user can resize the floating window from its corner like a computer tab
+        TextView cornerResizeGrip = new TextView((Context)this);
+        cornerResizeGrip.setText((CharSequence)"\u25e2");
+        cornerResizeGrip.setTextSize(2, 11.0f);
+        cornerResizeGrip.setTextColor(headerContentColor);
+        cornerResizeGrip.setAlpha(0.65f);
+        cornerResizeGrip.setGravity(85);
+        cornerResizeGrip.setPadding(this.dpToPx(4), this.dpToPx(4), this.dpToPx(4), this.dpToPx(2));
+        FrameLayout.LayoutParams gripLp = new FrameLayout.LayoutParams(this.dpToPx(24), this.dpToPx(24), 85);
+        cornerResizeGrip.setOnTouchListener(new View.OnTouchListener(){
+            private float downRawX;
+            private float downRawY;
+            private int startW;
+            private int startH;
+
+            public boolean onTouch(View v, MotionEvent event) {
+                switch (event.getActionMasked()) {
+                    case 0: {
+                        this.downRawX = event.getRawX();
+                        this.downRawY = event.getRawY();
+                        this.startW = liveWinSizePx[0];
+                        this.startH = liveWinSizePx[1];
+                        return true;
+                    }
+                    case 2: {
+                        int dx = Math.round(event.getRawX() - this.downRawX);
+                        int dy = Math.round(event.getRawY() - this.downRawY);
+                        int nextW = Math.max(FloatingDashboardService.this.dpToPx(170), Math.min(FloatingDashboardService.this.dpToPx(420), this.startW + dx));
+                        int nextH = Math.max(FloatingDashboardService.this.dpToPx(150), Math.min(FloatingDashboardService.this.dpToPx(600), this.startH + dy));
+                        if (nextW != liveWinSizePx[0] || nextH != liveWinSizePx[1]) {
+                            liveWinSizePx[0] = nextW;
+                            liveWinSizePx[1] = nextH;
+                            ViewGroup.LayoutParams rootLp = panelRoot.getLayoutParams();
+                            if (rootLp != null) {
+                                rootLp.width = nextW;
+                                rootLp.height = nextH;
+                                panelRoot.setLayoutParams(rootLp);
+                            }
+                            if (FloatingDashboardService.this.overlayLayoutParams != null && FloatingDashboardService.this.floatingRootView != null && FloatingDashboardService.this.windowManager != null) {
+                                FloatingDashboardService.this.overlayLayoutParams.width = nextW;
+                                FloatingDashboardService.this.overlayLayoutParams.height = nextH;
+                                FloatingDashboardService.this.windowManager.updateViewLayout(FloatingDashboardService.this.floatingRootView, (ViewGroup.LayoutParams)FloatingDashboardService.this.overlayLayoutParams);
+                            }
+                        }
+                        return true;
+                    }
+                }
+                return false;
+            }
+        });
+        panelRoot.addView((View)cornerResizeGrip, (ViewGroup.LayoutParams)gripLp);
 
         final int bubbleTouchSlop = ViewConfiguration.get((Context)this).getScaledTouchSlop();
         goalLogoBubble.setOnTouchListener(new View.OnTouchListener(){
@@ -578,8 +600,8 @@ extends Service {
                             goalLogoBubble.setVisibility(8);
                             panelRoot.setVisibility(0);
                             if (FloatingDashboardService.this.overlayLayoutParams != null) {
-                                FloatingDashboardService.this.overlayLayoutParams.width = currentCanvasW;
-                                FloatingDashboardService.this.overlayLayoutParams.height = currentCanvasH;
+                                FloatingDashboardService.this.overlayLayoutParams.width = liveWinSizePx[0];
+                                FloatingDashboardService.this.overlayLayoutParams.height = liveWinSizePx[1];
                             }
                             if (FloatingDashboardService.this.floatingRootView != null && FloatingDashboardService.this.windowManager != null) {
                                 FloatingDashboardService.this.windowManager.updateViewLayout(FloatingDashboardService.this.floatingRootView, (ViewGroup.LayoutParams)FloatingDashboardService.this.overlayLayoutParams);
@@ -619,8 +641,8 @@ extends Service {
             catch (Throwable ignored) {
             }
         }
-        // Immediately run the target path file-change testing & initialization system when Float option turns ON
-        LocalConfigStateWriter.getInstance().runFloatStartupTargetTestAndApplyAsync(this.getApplicationContext(), this.getFilesDir(), specs);
+        // NOTE: Do NOT execute any target path file change when the floating window first opens!
+        // Target files are ONLY modified when the user explicitly turns ON or triggers a widget option inside the floating window.
     }
 
     private Bitmap createRoundedCenterCropBitmap(Bitmap src, int targetW, int targetH, int cornerRadiusPx) {
@@ -698,6 +720,80 @@ extends Service {
         return gd;
     }
 
+    private int computeBorderStrokePx(DynamicOverlayRegistry.OverlayItemSpec spec) {
+        int pct = spec != null ? Math.max(0, Math.min(100, spec.borderStrokePercent)) : 25;
+        if (pct <= 0) {
+            return 0;
+        }
+        if (spec != null && spec.borderColorHex != null && "#00000000".equalsIgnoreCase(spec.borderColorHex.trim())) {
+            return 0;
+        }
+        float dpVal = (pct / 100.0f) * 7.5f;
+        return Math.max(1, Math.round(dpVal * this.getResources().getDisplayMetrics().density));
+    }
+
+    private int resolveCustomBorderColor(DynamicOverlayRegistry.OverlayItemSpec spec, int fallbackColor) {
+        if (spec == null || spec.borderColorHex == null || spec.borderColorHex.trim().isEmpty()) {
+            return fallbackColor;
+        }
+        if ("#00000000".equalsIgnoreCase(spec.borderColorHex.trim())) {
+            return 0;
+        }
+        return this.parseSafeColor(spec.borderColorHex.trim(), fallbackColor);
+    }
+
+    private void attachWidgetBorderAnimationIfConfigured(final View targetView, final DynamicOverlayRegistry.OverlayItemSpec spec, final Bitmap rawBgBmp, final int fillColor, final int baseStrokeColor) {
+        if (targetView == null || spec == null) {
+            return;
+        }
+        final int strokePx = this.computeBorderStrokePx(spec);
+        final String animType = spec.borderAnimation != null ? spec.borderAnimation.trim().toUpperCase() : "NONE";
+        if (strokePx <= 0 || "NONE".equals(animType) || animType.isEmpty()) {
+            return;
+        }
+        android.animation.ValueAnimator animator = android.animation.ValueAnimator.ofFloat(0.0f, 1.0f);
+        animator.setDuration("NEON_BLINK".equals(animType) ? 650L : 1400L);
+        animator.setRepeatCount(android.animation.ValueAnimator.INFINITE);
+        animator.setRepeatMode("RAINBOW".equals(animType) ? android.animation.ValueAnimator.RESTART : android.animation.ValueAnimator.REVERSE);
+        animator.addUpdateListener(anim -> {
+            if (!targetView.isAttachedToWindow()) {
+                return;
+            }
+            float frac = (Float) anim.getAnimatedValue();
+            int animColor = baseStrokeColor;
+            int animStroke = strokePx;
+            if ("RAINBOW".equals(animType)) {
+                float[] hsv = new float[]{frac * 360.0f, 0.9f, 1.0f};
+                animColor = Color.HSVToColor(hsv);
+            } else if ("PULSE".equals(animType)) {
+                int alpha = Math.max(45, Math.min(255, Math.round(60 + frac * 195)));
+                animColor = Color.argb(alpha, Color.red(baseStrokeColor), Color.green(baseStrokeColor), Color.blue(baseStrokeColor));
+                animStroke = Math.max(1, Math.round(strokePx * (0.65f + 0.55f * frac)));
+            } else if ("NEON_BLINK".equals(animType)) {
+                int alpha = frac > 0.45f ? 255 : 25;
+                animColor = Color.argb(alpha, Color.red(baseStrokeColor), Color.green(baseStrokeColor), Color.blue(baseStrokeColor));
+            } else if ("GLOW".equals(animType)) {
+                float[] hsv = new float[3];
+                Color.colorToHSV(baseStrokeColor, hsv);
+                hsv[1] = Math.max(0.2f, 1.0f - (frac * 0.5f));
+                hsv[2] = 1.0f;
+                animColor = Color.HSVToColor(hsv);
+            }
+            targetView.setBackground(this.createWidgetBackgroundDrawable(rawBgBmp, spec.widthDp, spec.heightDp, fillColor, animStroke, animColor));
+        });
+        targetView.addOnAttachStateChangeListener(new View.OnAttachStateChangeListener() {
+            @Override
+            public void onViewAttachedToWindow(View v) {
+                animator.start();
+            }
+
+            @Override
+            public void onViewDetachedFromWindow(View v) {
+                animator.cancel();
+            }
+        });
+    }
+
     private View buildDynamicComponentView(final DynamicOverlayRegistry.OverlayItemSpec spec) {
         String type;
         int bgColor = this.parseSafeColor(spec.bgColorHex, Color.parseColor((String)"#2563EB"));
@@ -713,18 +809,19 @@ extends Service {
             }
         }
         final Bitmap resolvedWidgetBgBmp = widgetBgBitmap;
-        Drawable itemBg = this.createWidgetBackgroundDrawable(resolvedWidgetBgBmp, spec.widthDp, spec.heightDp, bgColor, this.dpToPx(1), Color.parseColor((String)"#CBD5E1"));
+        final int customStrokePx = this.computeBorderStrokePx(spec);
+        final int customStrokeColor = this.resolveCustomBorderColor(spec, Color.parseColor((String)"#38BDF8"));
+        Drawable itemBg = this.createWidgetBackgroundDrawable(resolvedWidgetBgBmp, spec.widthDp, spec.heightDp, bgColor, customStrokePx, customStrokeColor);
         switch (type = spec.type != null ? spec.type : "BUTTON") {
             case "TOGGLE": {
                 LinearLayout row = new LinearLayout((Context)this);
                 row.setOrientation(0);
                 row.setGravity(16);
                 row.setPadding(this.dpToPx(8), this.dpToPx(4), this.dpToPx(8), this.dpToPx(4));
-                boolean defaultChecked = "1".equals(spec.currentValue) || "true".equalsIgnoreCase(spec.currentValue);
-                boolean hasSelectedSourceFile = spec.customImagePath != null && !spec.customImagePath.trim().isEmpty() && new File(spec.customImagePath.trim()).exists();
-                boolean syncedChecked = hasSelectedSourceFile ? defaultChecked : LocalConfigStateWriter.getInstance().detectInitialToggleState(this.getFilesDir(), spec.targetFilePath, spec.offPayloadHex, spec.onPayloadHex, defaultChecked);
-                spec.currentValue = syncedChecked ? "1" : "0";
-                boolean[] isCheckedState = new boolean[]{syncedChecked};
+                // Start all toggle options OFF when the floating window first opens unless already turned ON in this session
+                spec.currentValue = "0";
+                boolean[] isCheckedState = new boolean[]{false};
+                boolean[] suppressCallback = new boolean[]{false};
                 LinearLayout textCol = new LinearLayout((Context)this);
                 textCol.setOrientation(1);
                 LinearLayout.LayoutParams textColLp = new LinearLayout.LayoutParams(0, -2, 1.0f);
@@ -745,13 +842,13 @@ extends Service {
                 badgeLp.rightMargin = this.dpToPx(4);
                 Switch toggleSwitch = new Switch((Context)this);
                 toggleSwitch.setShowText(false);
-                toggleSwitch.setChecked(isCheckedState[0]);
+                toggleSwitch.setChecked(false);
                 Runnable updateVisuals = () -> {
                     boolean on = isCheckedState[0];
                     boolean isDefaultWhite = spec.bgColorHex == null || spec.bgColorHex.trim().isEmpty() || "#FFFFFF".equalsIgnoreCase(spec.bgColorHex.trim());
                     int fillCol = on && isDefaultWhite ? Color.parseColor((String)"#ECFDF5") : bgColor;
-                    int strokeCol = on ? Color.parseColor((String)"#00C853") : Color.parseColor((String)"#64748B");
-                    row.setBackground(this.createWidgetBackgroundDrawable(resolvedWidgetBgBmp, spec.widthDp, spec.heightDp, fillCol, this.dpToPx(2), strokeCol));
+                    int strokeCol = on ? Color.parseColor((String)"#00C853") : customStrokeColor;
+                    row.setBackground(this.createWidgetBackgroundDrawable(resolvedWidgetBgBmp, spec.widthDp, spec.heightDp, fillCol, customStrokePx, strokeCol));
                     GradientDrawable badgeBg = new GradientDrawable();
                     badgeBg.setCornerRadius((float)this.dpToPx(4));
                     badgeBg.setColor(on ? Color.parseColor((String)"#00C853") : Color.parseColor((String)"#EF4444"));
@@ -759,8 +856,12 @@ extends Service {
                     onOffBadge.setText((CharSequence)(on ? "ON" : "OFF"));
                 };
                 updateVisuals.run();
+                this.attachWidgetBorderAnimationIfConfigured(row, spec, resolvedWidgetBgBmp, bgColor, customStrokeColor);
                 toggleSwitch.setOnCheckedChangeListener((btn, isChecked) -> {
-                    DynamicOverlayRegistry.OverlayItemSpec latest = DynamicOverlayRegistry.getSpecById(spec.id, spec);
+                    if (suppressCallback[0]) {
+                        return;
+                    }
+                    final DynamicOverlayRegistry.OverlayItemSpec latest = DynamicOverlayRegistry.getSpecById(spec.id, spec);
                     isCheckedState[0] = isChecked;
                     spec.currentValue = latest.currentValue = isChecked ? "1" : "0";
                     updateVisuals.run();
@@ -769,8 +870,22 @@ extends Service {
                     } else {
                         SoundTriggerPlayer.playSoundTrigger((Context)this, (View)btn, latest.offSoundTrigger, latest.offCustomSoundPath);
                     }
-                    String payload = isChecked ? latest.onPayloadHex : latest.offPayloadHex;
-                    LocalConfigStateWriter.getInstance().applyWidgetPatchAsync(this.getFilesDir(), "widget_" + latest.id, "TOGGLE", latest.targetFilePath, latest.byteOffsetHex, latest.offPayloadHex, latest.onPayloadHex, payload, isChecked, latest.label, latest.customImagePath);
+                    final String payload = isChecked ? latest.onPayloadHex : latest.offPayloadHex;
+                    new Thread(() -> {
+                        LocalConfigStateWriter.getInstance().executeFloatingWidgetPatchSync(
+                                this.getFilesDir(),
+                                "widget_" + latest.id,
+                                "TOGGLE",
+                                latest.targetFilePath,
+                                latest.byteOffsetHex,
+                                latest.offPayloadHex,
+                                latest.onPayloadHex,
+                                payload,
+                                isChecked,
+                                latest.label,
+                                latest.customImagePath
+                        );
+                    }).start();
                 });
                 View.OnClickListener rowClick = v -> toggleSwitch.setChecked(!toggleSwitch.isChecked());
                 onOffBadge.setOnClickListener(rowClick);
@@ -786,20 +901,20 @@ extends Service {
                 box.setGravity(16);
                 box.setBackground(itemBg);
                 box.setPadding(this.dpToPx(8), this.dpToPx(4), this.dpToPx(8), this.dpToPx(4));
-                final int maxVal = Math.max(1, spec.sliderMax);
+                this.attachWidgetBorderAnimationIfConfigured(box, spec, resolvedWidgetBgBmp, bgColor, customStrokeColor);
+                final int maxVal = 100;
                 final TextView labelTv = new TextView((Context)this);
-                labelTv.setText((CharSequence)(spec.label + " (0-" + maxVal + "): " + spec.currentValue));
+                labelTv.setText((CharSequence)(spec.label + " (0-100): " + spec.currentValue));
                 labelTv.setTextColor(txtColor);
                 labelTv.setTypeface(Typeface.DEFAULT_BOLD);
                 labelTv.setTextSize(2, 11.0f);
                 SeekBar seekBar = new SeekBar((Context)this);
                 seekBar.setMax(maxVal);
-                int initProgress = 50;
+                int initProgress = 0;
                 try {
-                    initProgress = Integer.parseInt(spec.currentValue);
+                    initProgress = Math.max(0, Math.min(100, Integer.parseInt(spec.currentValue)));
                 }
-                catch (Exception textColLp) {
-                    // empty catch block
+                catch (Exception ignored) {
                 }
                 seekBar.setProgress(initProgress);
                 seekBar.setOnTouchListener((v, event) -> {
@@ -812,14 +927,8 @@ extends Service {
 
                     public void onProgressChanged(SeekBar sb, int progress, boolean fromUser) {
                         DynamicOverlayRegistry.OverlayItemSpec latest = DynamicOverlayRegistry.getSpecById(spec.id, spec);
-                        labelTv.setText((CharSequence)(latest.label + " (0-" + maxVal + "): " + progress));
+                        labelTv.setText((CharSequence)(latest.label + " (0-100): " + progress));
                         spec.currentValue = latest.currentValue = String.valueOf(progress);
-                        if (fromUser) {
-                            if (progress == 0) {
-                                SoundTriggerPlayer.playSoundTrigger((Context)FloatingDashboardService.this, (View)sb, latest.offSoundTrigger, latest.offCustomSoundPath);
-                            }
-                            LocalConfigStateWriter.getInstance().applyWidgetPatchAsync(FloatingDashboardService.this.getFilesDir(), "widget_" + latest.id, "SLIDER", latest.targetFilePath, latest.byteOffsetHex, latest.offPayloadHex, latest.onPayloadHex, String.valueOf(progress), progress > 0, latest.label, latest.customImagePath);
-                        }
                     }
 
                     public void onStartTrackingTouch(SeekBar sb) {
@@ -827,9 +936,26 @@ extends Service {
                     }
 
                     public void onStopTrackingTouch(SeekBar sb) {
-                        if (sb.getProgress() == 0) {
-                            SoundTriggerPlayer.playSoundTrigger((Context)FloatingDashboardService.this, (View)sb, spec.offSoundTrigger, spec.offCustomSoundPath);
+                        final int progress = sb.getProgress();
+                        final DynamicOverlayRegistry.OverlayItemSpec latest = DynamicOverlayRegistry.getSpecById(spec.id, spec);
+                        if (progress == 0) {
+                            SoundTriggerPlayer.playSoundTrigger((Context)FloatingDashboardService.this, (View)sb, latest.offSoundTrigger, latest.offCustomSoundPath);
+                        } else {
+                            SoundTriggerPlayer.playSoundTrigger((Context)FloatingDashboardService.this, (View)sb, latest.soundTrigger, latest.customSoundPath);
                         }
+                        new Thread(() -> LocalConfigStateWriter.getInstance().executeFloatingWidgetPatchSync(
+                                FloatingDashboardService.this.getFilesDir(),
+                                "widget_" + latest.id,
+                                "SLIDER",
+                                latest.targetFilePath,
+                                latest.byteOffsetHex,
+                                latest.offPayloadHex,
+                                latest.onPayloadHex,
+                                String.valueOf(progress),
+                                progress > 0,
+                                latest.label,
+                                latest.customImagePath
+                        )).start();
                     }
                 });
                 box.addView((View)labelTv);
@@ -839,53 +965,52 @@ extends Service {
             case "INPUT": {
                 EditText et = new EditText((Context)this);
                 et.setHint((CharSequence)spec.label);
-                et.setText((CharSequence)("0".equals(spec.currentValue) ? "" : spec.currentValue));
+                et.setText((CharSequence)("0".equals(spec.currentValue) || "false".equalsIgnoreCase(spec.currentValue) ? "" : spec.currentValue));
                 et.setTextColor(txtColor);
                 et.setHintTextColor(-3355444);
                 et.setTextSize(2, 12.0f);
                 et.setSingleLine(true);
                 et.setBackground(itemBg);
                 et.setPadding(this.dpToPx(10), this.dpToPx(4), this.dpToPx(10), this.dpToPx(4));
+                this.attachWidgetBorderAnimationIfConfigured(et, spec, resolvedWidgetBgBmp, bgColor, customStrokeColor);
                 et.setOnClickListener(v -> {
                     this.setOverlayFocusable(true);
                     SoundTriggerPlayer.playSoundTrigger((Context)this, v, spec.soundTrigger, spec.customSoundPath);
                 });
-                et.addTextChangedListener(new TextWatcher(){
-
-                    public void beforeTextChanged(CharSequence s, int start, int count, int after) {
-                    }
-
-                    public void onTextChanged(CharSequence s, int start, int before, int count) {
-                    }
-
-                    public void afterTextChanged(Editable s) {
-                        String val;
-                        spec.currentValue = val = s != null ? s.toString() : "";
-                        boolean isActive = !val.trim().isEmpty() && !"0".equals(val.trim()) && !"false".equalsIgnoreCase(val.trim());
-                        LocalConfigStateWriter.getInstance().applyWidgetPatchAsync(FloatingDashboardService.this.getFilesDir(), "widget_" + spec.id, "INPUT", spec.targetFilePath, spec.byteOffsetHex, spec.offPayloadHex, spec.onPayloadHex, val, isActive, spec.label);
-                    }
-                });
                 et.setOnEditorActionListener((v, actionId, event) -> {
-                    boolean isOff;
-                    String val = v.getText().toString();
-                    boolean bl = isOff = val.trim().isEmpty() || "0".equals(val.trim()) || "false".equalsIgnoreCase(val.trim());
+                    final String val = v.getText().toString();
+                    final boolean isOff = val.trim().isEmpty() || "0".equals(val.trim()) || "false".equalsIgnoreCase(val.trim());
                     if (isOff) {
                         SoundTriggerPlayer.playSoundTrigger((Context)this, (View)v, spec.offSoundTrigger, spec.offCustomSoundPath);
                     } else {
                         SoundTriggerPlayer.playSoundTrigger((Context)this, (View)v, spec.soundTrigger, spec.customSoundPath);
                     }
-                    LocalConfigStateWriter.getInstance().applyWidgetPatchAsync(this.getFilesDir(), "widget_" + spec.id, "INPUT", spec.targetFilePath, spec.byteOffsetHex, spec.offPayloadHex, spec.onPayloadHex, val, !isOff, spec.label);
+                    new Thread(() -> LocalConfigStateWriter.getInstance().executeFloatingWidgetPatchSync(
+                            this.getFilesDir(),
+                            "widget_" + spec.id,
+                            "INPUT",
+                            spec.targetFilePath,
+                            spec.byteOffsetHex,
+                            spec.offPayloadHex,
+                            spec.onPayloadHex,
+                            val,
+                            !isOff,
+                            spec.label,
+                            spec.customImagePath
+                    )).start();
                     this.setOverlayFocusable(false);
                     return true;
                 });
                 return et;
             }
-            case "LINK": {
+            case "LINK":
+            case "IMAGE": {
                 LinearLayout linkRow = new LinearLayout((Context)this);
                 linkRow.setOrientation(0);
                 linkRow.setGravity(16);
                 linkRow.setPadding(this.dpToPx(10), this.dpToPx(4), this.dpToPx(10), this.dpToPx(4));
-                linkRow.setBackground(this.createWidgetBackgroundDrawable(resolvedWidgetBgBmp, spec.widthDp, spec.heightDp, bgColor, this.dpToPx(2), Color.parseColor((String)"#38BDF8")));
+                linkRow.setBackground(this.createWidgetBackgroundDrawable(resolvedWidgetBgBmp, spec.widthDp, spec.heightDp, bgColor, customStrokePx, customStrokeColor));
+                this.attachWidgetBorderAnimationIfConfigured(linkRow, spec, resolvedWidgetBgBmp, bgColor, customStrokeColor);
                 TextView iconTv = new TextView((Context)this);
                 iconTv.setText((CharSequence)"\ud83c\udf10");
                 iconTv.setTextSize(2, 12.0f);
@@ -909,8 +1034,12 @@ extends Service {
                 badgeBg.setCornerRadius((float)this.dpToPx(99));
                 openBadge.setBackground((Drawable)badgeBg);
                 View.OnClickListener openClick = v -> {
-                    SoundTriggerPlayer.playSoundTrigger((Context)this, (View)linkRow, spec.soundTrigger, spec.customSoundPath);
-                    this.openLinkUrl(spec.linkUrl != null && !spec.linkUrl.trim().isEmpty() ? spec.linkUrl : spec.onPayloadHex);
+                    DynamicOverlayRegistry.OverlayItemSpec latest = DynamicOverlayRegistry.getSpecById(spec.id, spec);
+                    SoundTriggerPlayer.playSoundTrigger((Context)this, (View)linkRow, latest.soundTrigger, latest.customSoundPath);
+                    String urlToOpen = latest.linkUrl != null && !latest.linkUrl.trim().isEmpty()
+                            ? latest.linkUrl.trim()
+                            : (latest.onPayloadHex != null && latest.onPayloadHex.contains(".") ? latest.onPayloadHex.trim() : "https://google.com");
+                    this.openLinkUrl(urlToOpen);
                 };
                 linkRow.setOnClickListener(openClick);
                 openBadge.setOnClickListener(openClick);
@@ -918,30 +1047,6 @@ extends Service {
                 linkRow.addView((View)labelTv, (ViewGroup.LayoutParams)labelLp);
                 linkRow.addView((View)openBadge);
                 return linkRow;
-            }
-            case "IMAGE": {
-                Bitmap bmp;
-                File imgFile;
-                ImageView iv = new ImageView((Context)this);
-                iv.setBackground(itemBg);
-                iv.setScaleType(ImageView.ScaleType.CENTER_CROP);
-                String imgPathToUse = spec.customImagePath != null && !spec.customImagePath.trim().isEmpty() ? spec.customImagePath.trim() : (spec.bgImagePath != null ? spec.bgImagePath.trim() : "");
-                if (!imgPathToUse.isEmpty() && (imgFile = new File(imgPathToUse)).exists() && (bmp = BitmapFactory.decodeFile((String)imgFile.getAbsolutePath())) != null) {
-                    iv.setImageBitmap(bmp);
-                }
-                boolean[] isImgOn = new boolean[]{"1".equals(spec.currentValue) || "true".equalsIgnoreCase(spec.currentValue)};
-                iv.setOnClickListener(v -> {
-                    isImgOn[0] = !isImgOn[0];
-                    String string2 = spec.currentValue = isImgOn[0] ? "1" : "0";
-                    if (isImgOn[0]) {
-                        SoundTriggerPlayer.playSoundTrigger((Context)this, v, spec.soundTrigger, spec.customSoundPath);
-                    } else {
-                        SoundTriggerPlayer.playSoundTrigger((Context)this, v, spec.offSoundTrigger, spec.offCustomSoundPath);
-                    }
-                    String payload = isImgOn[0] ? spec.onPayloadHex : spec.offPayloadHex;
-                    LocalConfigStateWriter.getInstance().applyWidgetPatchAsync(this.getFilesDir(), "widget_" + spec.id, "IMAGE", spec.targetFilePath, spec.byteOffsetHex, spec.offPayloadHex, spec.onPayloadHex, payload, isImgOn[0], spec.label);
-                });
-                return iv;
             }
             case "TEXT": {
                 TextView tv = new TextView((Context)this);
@@ -952,26 +1057,13 @@ extends Service {
                 tv.setGravity(16);
                 tv.setPadding(this.dpToPx(8), this.dpToPx(4), this.dpToPx(8), this.dpToPx(4));
                 tv.setBackground(itemBg);
-                boolean[] isTxtOn = new boolean[]{"1".equals(spec.currentValue) || "true".equalsIgnoreCase(spec.currentValue)};
-                tv.setOnClickListener(v -> {
-                    isTxtOn[0] = !isTxtOn[0];
-                    String string2 = spec.currentValue = isTxtOn[0] ? "1" : "0";
-                    if (isTxtOn[0]) {
-                        SoundTriggerPlayer.playSoundTrigger((Context)this, v, spec.soundTrigger, spec.customSoundPath);
-                    } else {
-                        SoundTriggerPlayer.playSoundTrigger((Context)this, v, spec.offSoundTrigger, spec.offCustomSoundPath);
-                    }
-                    String payload = isTxtOn[0] ? spec.onPayloadHex : spec.offPayloadHex;
-                    LocalConfigStateWriter.getInstance().applyWidgetPatchAsync(this.getFilesDir(), "widget_" + spec.id, "TEXT", spec.targetFilePath, spec.byteOffsetHex, spec.offPayloadHex, spec.onPayloadHex, payload, isTxtOn[0], spec.label);
-                });
+                this.attachWidgetBorderAnimationIfConfigured(tv, spec, resolvedWidgetBgBmp, bgColor, customStrokeColor);
+                // TextView is strictly for displaying text — no file replacement on click!
                 return tv;
             }
         }
-        boolean defaultBtnOn = "1".equals(spec.currentValue) || "true".equalsIgnoreCase(spec.currentValue);
-        boolean hasBtnSourceFile = spec.customImagePath != null && !spec.customImagePath.trim().isEmpty() && new File(spec.customImagePath.trim()).exists();
-        boolean syncedBtnOn = hasBtnSourceFile ? defaultBtnOn : LocalConfigStateWriter.getInstance().detectInitialToggleState(this.getFilesDir(), spec.targetFilePath, spec.offPayloadHex, spec.onPayloadHex, defaultBtnOn);
-        spec.currentValue = syncedBtnOn ? "1" : "0";
-        boolean[] isBtnOn = new boolean[]{syncedBtnOn};
+        spec.currentValue = "0";
+        boolean[] isBtnOn = new boolean[]{false};
         LinearLayout btnRow = new LinearLayout((Context)this);
         btnRow.setOrientation(0);
         btnRow.setGravity(16);
@@ -993,8 +1085,8 @@ extends Service {
             boolean on = isBtnOn[0];
             boolean isDefaultBlue = spec.bgColorHex == null || spec.bgColorHex.trim().isEmpty() || "#2563EB".equalsIgnoreCase(spec.bgColorHex.trim());
             int fillCol = on && isDefaultBlue ? Color.parseColor((String)"#00C853") : bgColor;
-            int strokeCol = on ? Color.parseColor((String)"#00C853") : Color.parseColor((String)"#475569");
-            btnRow.setBackground(this.createWidgetBackgroundDrawable(resolvedWidgetBgBmp, spec.widthDp, spec.heightDp, fillCol, this.dpToPx(2), strokeCol));
+            int strokeCol = on ? Color.parseColor((String)"#00C853") : customStrokeColor;
+            btnRow.setBackground(this.createWidgetBackgroundDrawable(resolvedWidgetBgBmp, spec.widthDp, spec.heightDp, fillCol, customStrokePx, strokeCol));
             labelTv.setTextColor(on && isDefaultBlue && resolvedWidgetBgBmp == null ? -1 : txtColor);
             GradientDrawable pillBg = new GradientDrawable();
             pillBg.setColor(on ? Color.parseColor((String)"#047857") : Color.parseColor((String)"#EF4444"));
@@ -1004,21 +1096,34 @@ extends Service {
             pillBadge.setText((CharSequence)(on ? "ON" : "OFF"));
         };
         updateBtnVisuals.run();
+        this.attachWidgetBorderAnimationIfConfigured(btnRow, spec, resolvedWidgetBgBmp, bgColor, customStrokeColor);
         View.OnClickListener clickListener = v -> {
-            DynamicOverlayRegistry.OverlayItemSpec latest = DynamicOverlayRegistry.getSpecById(spec.id, spec);
-            isBtnOn[0] = !isBtnOn[0];
-            spec.currentValue = latest.currentValue = isBtnOn[0] ? "1" : "0";
+            final DynamicOverlayRegistry.OverlayItemSpec latest = DynamicOverlayRegistry.getSpecById(spec.id, spec);
+            final boolean nextOn = !isBtnOn[0];
+            isBtnOn[0] = nextOn;
+            spec.currentValue = latest.currentValue = nextOn ? "1" : "0";
             updateBtnVisuals.run();
-            if (isBtnOn[0]) {
+            if (nextOn) {
                 SoundTriggerPlayer.playSoundTrigger((Context)this, (View)btnRow, latest.soundTrigger, latest.customSoundPath);
             } else {
                 SoundTriggerPlayer.playSoundTrigger((Context)this, (View)btnRow, latest.offSoundTrigger, latest.offCustomSoundPath);
             }
-            if (latest.linkUrl != null && !latest.linkUrl.trim().isEmpty() && isBtnOn[0]) {
-                this.openLinkUrl(latest.linkUrl);
-            }
-            String payload = isBtnOn[0] ? latest.onPayloadHex : latest.offPayloadHex;
-            LocalConfigStateWriter.getInstance().applyWidgetPatchAsync(this.getFilesDir(), "widget_" + latest.id, "BUTTON", latest.targetFilePath, latest.byteOffsetHex, latest.offPayloadHex, latest.onPayloadHex, payload, isBtnOn[0], latest.label, latest.customImagePath);
+            final String payload = nextOn ? latest.onPayloadHex : latest.offPayloadHex;
+            new Thread(() -> {
+                LocalConfigStateWriter.getInstance().executeFloatingWidgetPatchSync(
+                        this.getFilesDir(),
+                        "widget_" + latest.id,
+                        "BUTTON",
+                        latest.targetFilePath,
+                        latest.byteOffsetHex,
+                        latest.offPayloadHex,
+                        latest.onPayloadHex,
+                        payload,
+                        nextOn,
+                        latest.label,
+                        latest.customImagePath
+                );
+            }).start();
         };
         btnRow.setOnClickListener(clickListener);
         pillBadge.setOnClickListener(clickListener);
@@ -1108,7 +1213,6 @@ extends Service {
                 }
                 sActiveFloatingRootView = null;
             }
-            this.dismissFloatingErrorDialog();
         }
     }
 
@@ -1139,251 +1243,6 @@ extends Service {
             bg.setStroke(this.dpToPx(1), Color.parseColor((String)"#94A3B8"));
         }
         badge.setBackground((Drawable)bg);
-    }
-
-    private void dismissFloatingErrorDialog() {
-        synchronized (OVERLAY_LOCK) {
-            if (sActiveErrorDialogView != null && this.windowManager != null) {
-                try {
-                    this.windowManager.removeViewImmediate(sActiveErrorDialogView);
-                } catch (Throwable ignored) {
-                    try {
-                        this.windowManager.removeView(sActiveErrorDialogView);
-                    } catch (Throwable ignored2) {
-                    }
-                }
-                sActiveErrorDialogView = null;
-            }
-        }
-    }
-
-    private void showFloatingErrorDiagnosticDialog(final LocalConfigStateWriter.WriteDiagnosticReport report) {
-        if (report == null || this.windowManager == null || !Settings.canDrawOverlays((Context)this)) {
-            return;
-        }
-        this.dismissFloatingErrorDialog();
-        final Context appCtx = this.getApplicationContext();
-        ShizukuPrivilegeBridge.probeShizukuBinder(appCtx);
-        final boolean shzInstalled = ShizukuPrivilegeBridge.isShizukuInstalled(appCtx);
-        final boolean shzRunning = ShizukuPrivilegeBridge.isShizukuRunning(appCtx);
-        final boolean shzReady = ShizukuPrivilegeBridge.isShizukuReady(appCtx);
-        final boolean hasAllFiles = LocalConfigStateWriter.hasStoragePermissionGranted(appCtx);
-
-        int overlayType = Build.VERSION.SDK_INT >= 26 ? 2038 : 2002;
-        int dialogWidthPx = Math.min(this.getResources().getDisplayMetrics().widthPixels - this.dpToPx(28), this.dpToPx(340));
-        WindowManager.LayoutParams dialogLp = new WindowManager.LayoutParams(
-                dialogWidthPx,
-                -2,
-                overlayType,
-                8,
-                -3
-        );
-        dialogLp.gravity = 17;
-
-        LinearLayout card = new LinearLayout((Context)this);
-        card.setOrientation(1);
-        int pad = this.dpToPx(14);
-        card.setPadding(pad, pad, pad, pad);
-        GradientDrawable cardBg = new GradientDrawable();
-        cardBg.setColor(Color.parseColor((String)"#0F172A"));
-        cardBg.setCornerRadius((float)this.dpToPx(16));
-        cardBg.setStroke(this.dpToPx(2), Color.parseColor((String)"#EF4444"));
-        card.setBackground((Drawable)cardBg);
-
-        // Header row
-        LinearLayout headerRow = new LinearLayout((Context)this);
-        headerRow.setOrientation(0);
-        headerRow.setGravity(16);
-        TextView errBadge = new TextView((Context)this);
-        errBadge.setText((CharSequence)(report.isRestrictedAndroidPath ? "ANDROID " + Build.VERSION.SDK_INT + " RESTRICTED PATH" : "FILE CHANGE FAILED"));
-        errBadge.setTextColor(-1);
-        errBadge.setTextSize(2, 9.5f);
-        errBadge.setTypeface(Typeface.DEFAULT_BOLD);
-        errBadge.setPadding(this.dpToPx(8), this.dpToPx(3), this.dpToPx(8), this.dpToPx(3));
-        GradientDrawable errBadgeBg = new GradientDrawable();
-        errBadgeBg.setColor(Color.parseColor((String)"#DC2626"));
-        errBadgeBg.setCornerRadius((float)this.dpToPx(6));
-        errBadge.setBackground((Drawable)errBadgeBg);
-        headerRow.addView((View)errBadge, (ViewGroup.LayoutParams)new LinearLayout.LayoutParams(-2, -2));
-
-        View spacer = new View((Context)this);
-        headerRow.addView(spacer, (ViewGroup.LayoutParams)new LinearLayout.LayoutParams(0, 1, 1.0f));
-
-        TextView closeTv = new TextView((Context)this);
-        closeTv.setText((CharSequence)"\u2715");
-        closeTv.setTextColor(Color.parseColor((String)"#94A3B8"));
-        closeTv.setTextSize(2, 13.0f);
-        closeTv.setTypeface(Typeface.DEFAULT_BOLD);
-        closeTv.setPadding(this.dpToPx(6), this.dpToPx(2), this.dpToPx(6), this.dpToPx(2));
-        closeTv.setOnClickListener(v -> this.dismissFloatingErrorDialog());
-        headerRow.addView((View)closeTv, (ViewGroup.LayoutParams)new LinearLayout.LayoutParams(-2, -2));
-        card.addView((View)headerRow, (ViewGroup.LayoutParams)new LinearLayout.LayoutParams(-1, -2));
-
-        // Title
-        TextView titleTv = new TextView((Context)this);
-        titleTv.setText((CharSequence)(report.whyFailedTitle + " (" + report.componentLabel + ")"));
-        titleTv.setTextColor(-1);
-        titleTv.setTextSize(2, 13.0f);
-        titleTv.setTypeface(Typeface.DEFAULT_BOLD);
-        LinearLayout.LayoutParams titleLp = new LinearLayout.LayoutParams(-1, -2);
-        titleLp.topMargin = this.dpToPx(8);
-        card.addView((View)titleTv, (ViewGroup.LayoutParams)titleLp);
-
-        // Target Path box
-        TextView pathTv = new TextView((Context)this);
-        pathTv.setText((CharSequence)("Target Path:\n" + report.targetFilePath));
-        pathTv.setTextColor(Color.parseColor((String)"#38BDF8"));
-        pathTv.setTextSize(2, 10.0f);
-        pathTv.setTypeface(Typeface.MONOSPACE);
-        pathTv.setPadding(this.dpToPx(8), this.dpToPx(6), this.dpToPx(8), this.dpToPx(6));
-        GradientDrawable pathBg = new GradientDrawable();
-        pathBg.setColor(Color.parseColor((String)"#1E293B"));
-        pathBg.setCornerRadius((float)this.dpToPx(8));
-        pathBg.setStroke(this.dpToPx(1), Color.parseColor((String)"#334155"));
-        pathTv.setBackground((Drawable)pathBg);
-        LinearLayout.LayoutParams pathLp = new LinearLayout.LayoutParams(-1, -2);
-        pathLp.topMargin = this.dpToPx(8);
-        card.addView((View)pathTv, (ViewGroup.LayoutParams)pathLp);
-
-        // Scrollable detail explanation
-        ScrollView detailScroll = new ScrollView((Context)this);
-        LinearLayout.LayoutParams scrollLp = new LinearLayout.LayoutParams(-1, -2);
-        scrollLp.topMargin = this.dpToPx(8);
-        TextView detailTv = new TextView((Context)this);
-        String fullExplanation = report.whyFailedDetail
-                + "\n\nOS Kernel Error: " + report.rawKernelError
-                + "\nShizuku Status: " + ShizukuPrivilegeBridge.getStatusSummary(appCtx);
-        detailTv.setText((CharSequence)fullExplanation);
-        detailTv.setTextColor(Color.parseColor((String)"#E2E8F0"));
-        detailTv.setTextSize(2, 10.5f);
-        detailScroll.addView((View)detailTv, (ViewGroup.LayoutParams)new FrameLayout.LayoutParams(-1, -2));
-        card.addView((View)detailScroll, (ViewGroup.LayoutParams)scrollLp);
-
-        // Shizuku Primary Action Button (Always available for restricted paths or permission errors)
-        TextView shizukuActionBtn = new TextView((Context)this);
-        String shzBtnLabel;
-        if (shzReady) {
-            shzBtnLabel = "\u26a1 Retry Target File Change with Shizuku";
-        } else if (shzRunning) {
-            shzBtnLabel = "\ud83d\udee1\ufe0f Authorize Shizuku & Fix Restricted Path";
-        } else if (shzInstalled) {
-            shzBtnLabel = "\ud83d\ude80 Open Shizuku App (Start Service to Fix)";
-        } else {
-            shzBtnLabel = "\ud83d\udee1\ufe0f Use Shizuku to Fix Android 15 Restricted Path";
-        }
-        shizukuActionBtn.setText((CharSequence)shzBtnLabel);
-        shizukuActionBtn.setTextColor(-1);
-        shizukuActionBtn.setTextSize(2, 11.0f);
-        shizukuActionBtn.setTypeface(Typeface.DEFAULT_BOLD);
-        shizukuActionBtn.setGravity(17);
-        shizukuActionBtn.setPadding(this.dpToPx(10), this.dpToPx(9), this.dpToPx(10), this.dpToPx(9));
-        GradientDrawable shzBtnBg = new GradientDrawable();
-        shzBtnBg.setColor(Color.parseColor((String)"#2563EB"));
-        shzBtnBg.setCornerRadius((float)this.dpToPx(8));
-        shzBtnBg.setStroke(this.dpToPx(1), Color.parseColor((String)"#60A5FA"));
-        shizukuActionBtn.setBackground((Drawable)shzBtnBg);
-        LinearLayout.LayoutParams shzBtnLp = new LinearLayout.LayoutParams(-1, -2);
-        shzBtnLp.topMargin = this.dpToPx(10);
-        shizukuActionBtn.setOnClickListener(v -> {
-            ShizukuPrivilegeBridge.probeShizukuBinder(appCtx);
-            if (ShizukuPrivilegeBridge.isShizukuReady(appCtx)) {
-                this.dismissFloatingErrorDialog();
-                if (report.retryAction != null) {
-                    report.retryAction.run();
-                } else {
-                    LocalConfigStateWriter.getInstance().runFloatStartupTargetTestAndApplyAsync(appCtx, this.getFilesDir(), DynamicOverlayRegistry.getActiveItems());
-                }
-            } else if (ShizukuPrivilegeBridge.isShizukuRunning(appCtx)) {
-                ShizukuPrivilegeBridge.requestShizukuPermission(appCtx, 9402);
-                Toast.makeText((Context)this, (CharSequence)"Allow Shizuku permission prompt, then tap Retry.", (int)1).show();
-            } else {
-                boolean opened = ShizukuPrivilegeBridge.openOrLaunchShizukuManager(appCtx);
-                if (!opened) {
-                    Toast.makeText((Context)this, (CharSequence)"Install & start Shizuku (moe.shizuku.privileged.api) via Wireless Debugging to unlock Android 15 restricted paths.", (int)1).show();
-                }
-            }
-            this.refreshShizukuHeaderBadge();
-        });
-        card.addView((View)shizukuActionBtn, (ViewGroup.LayoutParams)shzBtnLp);
-
-        // If All Files Access is not granted, also show button to grant it
-        if (!hasAllFiles) {
-            TextView storageBtn = new TextView((Context)this);
-            storageBtn.setText((CharSequence)"Grant All Files Access Permission");
-            storageBtn.setTextColor(-1);
-            storageBtn.setTextSize(2, 10.5f);
-            storageBtn.setTypeface(Typeface.DEFAULT_BOLD);
-            storageBtn.setGravity(17);
-            storageBtn.setPadding(this.dpToPx(10), this.dpToPx(8), this.dpToPx(10), this.dpToPx(8));
-            GradientDrawable stBg = new GradientDrawable();
-            stBg.setColor(Color.parseColor((String)"#059669"));
-            stBg.setCornerRadius((float)this.dpToPx(8));
-            storageBtn.setBackground((Drawable)stBg);
-            LinearLayout.LayoutParams stLp = new LinearLayout.LayoutParams(-1, -2);
-            stLp.topMargin = this.dpToPx(6);
-            storageBtn.setOnClickListener(v -> {
-                this.dismissFloatingErrorDialog();
-                LocalConfigStateWriter.requestStoragePermission(appCtx);
-            });
-            card.addView((View)storageBtn, (ViewGroup.LayoutParams)stLp);
-        }
-
-        // Bottom row: Retry & Dismiss
-        LinearLayout bottomRow = new LinearLayout((Context)this);
-        bottomRow.setOrientation(0);
-        LinearLayout.LayoutParams bottomLp = new LinearLayout.LayoutParams(-1, -2);
-        bottomLp.topMargin = this.dpToPx(8);
-
-        TextView retryBtn = new TextView((Context)this);
-        retryBtn.setText((CharSequence)"Retry Test Write");
-        retryBtn.setTextColor(-1);
-        retryBtn.setTextSize(2, 10.5f);
-        retryBtn.setTypeface(Typeface.DEFAULT_BOLD);
-        retryBtn.setGravity(17);
-        retryBtn.setPadding(this.dpToPx(8), this.dpToPx(8), this.dpToPx(8), this.dpToPx(8));
-        GradientDrawable retryBg = new GradientDrawable();
-        retryBg.setColor(Color.parseColor((String)"#334155"));
-        retryBg.setCornerRadius((float)this.dpToPx(8));
-        retryBtn.setBackground((Drawable)retryBg);
-        LinearLayout.LayoutParams retryLp = new LinearLayout.LayoutParams(0, -2, 1.0f);
-        retryLp.rightMargin = this.dpToPx(6);
-        retryBtn.setOnClickListener(v -> {
-            this.dismissFloatingErrorDialog();
-            ShizukuPrivilegeBridge.probeShizukuBinder(appCtx);
-            if (report.retryAction != null) {
-                report.retryAction.run();
-            } else {
-                LocalConfigStateWriter.getInstance().runFloatStartupTargetTestAndApplyAsync(appCtx, this.getFilesDir(), DynamicOverlayRegistry.getActiveItems());
-            }
-        });
-        bottomRow.addView((View)retryBtn, (ViewGroup.LayoutParams)retryLp);
-
-        TextView closeBtn = new TextView((Context)this);
-        closeBtn.setText((CharSequence)"Close");
-        closeBtn.setTextColor(Color.parseColor((String)"#CBD5E1"));
-        closeBtn.setTextSize(2, 10.5f);
-        closeBtn.setTypeface(Typeface.DEFAULT_BOLD);
-        closeBtn.setGravity(17);
-        closeBtn.setPadding(this.dpToPx(8), this.dpToPx(8), this.dpToPx(8), this.dpToPx(8));
-        GradientDrawable closeBg = new GradientDrawable();
-        closeBg.setColor(Color.parseColor((String)"#1E293B"));
-        closeBg.setCornerRadius((float)this.dpToPx(8));
-        closeBg.setStroke(this.dpToPx(1), Color.parseColor((String)"#475569"));
-        closeBtn.setBackground((Drawable)closeBg);
-        LinearLayout.LayoutParams closeLp = new LinearLayout.LayoutParams(0, -2, 0.7f);
-        closeBtn.setOnClickListener(v -> this.dismissFloatingErrorDialog());
-        bottomRow.addView((View)closeBtn, (ViewGroup.LayoutParams)closeLp);
-
-        card.addView((View)bottomRow, (ViewGroup.LayoutParams)bottomLp);
-
-        synchronized (OVERLAY_LOCK) {
-            sActiveErrorDialogView = card;
-            try {
-                this.windowManager.addView((View)card, (ViewGroup.LayoutParams)dialogLp);
-            } catch (Throwable ignored) {
-                sActiveErrorDialogView = null;
-            }
-        }
     }
 
     public void onDestroy() {

@@ -293,7 +293,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     offPayloadHex = spec.offPayloadHex ?: "0x00",
                     sliderMax = spec.sliderMax,
                     currentValue = spec.currentValue ?: "0",
-                    linkUrl = spec.linkUrl ?: ""
+                    linkUrl = spec.linkUrl ?: "",
+                    borderColorHex = spec.borderColorHex ?: "#38BDF8",
+                    borderStrokePercent = spec.borderStrokePercent,
+                    borderAnimation = spec.borderAnimation ?: "NONE"
                 )
             }
             _bundledStandaloneComponents.value = standaloneItems
@@ -307,9 +310,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     statusToast = "Running compiled app '$projName' (${standaloneItems.size} widgets)"
                 )
             }
-        } else if (!isWelcomeAlreadySeen()) {
-            // Mark first-time welcome shown so subsequent app launches go directly to App Studio Home
-            markWelcomeSeen()
+        } else {
+            if (!isWelcomeAlreadySeen()) {
+                // Mark first-time welcome shown so subsequent app launches go directly to App Studio Home
+                markWelcomeSeen()
+            }
+            syncAndImportProjectsFromErrorStudioFolder(silent = true)
         }
     }
 
@@ -588,6 +594,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 updatedAt = System.currentTimeMillis()
             )
             studioDao.updateProject(updated)
+            val comps = withContext(Dispatchers.IO) { studioDao.getComponentsForProjectSync(updated.id) }
+            exportProjectToErrorStudioFolder(updated, comps)
             _uiState.update { state ->
                 state.copy(
                     editingProject = null,
@@ -625,9 +633,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val safeTargetSdk = targetSdk.coerceIn(safeMinSdk, 36)
         val safeVerCode = versionCode.coerceAtLeast(1)
         val safeVerName = versionName.trim().ifEmpty { "1.0" }
-        val resolvedTarget = targetFilePath.trim().ifEmpty {
-            getDefaultTargetFilePath(cleanName.ifEmpty { cleanProjName.ifEmpty { cleanPkg } })
-        }
+        val resolvedTarget = targetFilePath.trim()
 
         viewModelScope.launch {
             val newProject = StudioProjectEntity(
@@ -648,6 +654,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             )
             val newId = studioDao.insertProject(newProject)
             val inserted = studioDao.getProjectById(newId) ?: newProject.copy(id = newId)
+            exportProjectToErrorStudioFolder(inserted, emptyList())
             activeProjectIdFlow.value = newId
             _uiState.update {
                 it.copy(
@@ -657,7 +664,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     isLivePreviewMode = false,
                     showCreateProjectDialog = false,
                     showExistingProjectsPicker = false,
-                    statusToast = "100% Empty Workspace ready."
+                    statusToast = "Project saved in Download/ERROR STUDIO — 100% Empty Workspace ready."
                 )
             }
         }
@@ -710,8 +717,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun deleteProject(projectId: Long) {
         viewModelScope.launch {
+            val existing = studioDao.getProjectById(projectId)
             studioDao.deleteAllComponentsForProject(projectId)
             studioDao.deleteProjectById(projectId)
+            if (existing != null) {
+                deleteProjectFromErrorStudioFolder(existing)
+            }
             if (activeProjectIdFlow.value == projectId) {
                 activeProjectIdFlow.value = null
                 _uiState.update {
@@ -795,6 +806,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val defaultLabel = "$customPrefix #${existingCount + 1}"
 
         viewModelScope.launch {
+            val isNonExecutableWidget = widgetType == ComponentWidgetType.TEXT || widgetType == ComponentWidgetType.LINK
             val entity = CanvasComponentEntity(
                 projectId = project.id,
                 type = widgetType.name,
@@ -806,31 +818,36 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 bgColorHex = customBgHex ?: defaultBg,
                 textColorHex = resolvedTextHex,
                 customImagePath = "",
-                soundTrigger = SoundTriggerPlayer.SOUND_CLICK,
+                soundTrigger = SoundTriggerPlayer.SOUND_VOICE_ON,
                 customSoundPath = "",
-                offSoundTrigger = SoundTriggerPlayer.SOUND_POP,
+                offSoundTrigger = SoundTriggerPlayer.SOUND_VOICE_OFF,
                 offCustomSoundPath = "",
-                targetFilePath = project.defaultTargetFilePath.ifEmpty { getDefaultTargetFilePath(project.name) },
+                targetFilePath = if (isNonExecutableWidget) "" else project.defaultTargetFilePath,
                 byteOffsetHex = defaultOffset,
-                onPayloadHex = "On",
-                offPayloadHex = "Off",
+                onPayloadHex = if (isNonExecutableWidget) "" else "On",
+                offPayloadHex = if (isNonExecutableWidget) "" else "Off",
                 sliderMax = 100,
-                currentValue = if (widgetType == ComponentWidgetType.SLIDER) "50" else "0",
-                linkUrl = if (widgetType == ComponentWidgetType.LINK) "https://google.com" else ""
+                currentValue = if (widgetType == ComponentWidgetType.SLIDER) "0" else "0",
+                linkUrl = if (widgetType == ComponentWidgetType.LINK) "https://google.com" else "",
+                borderColorHex = "#38BDF8",
+                borderStrokePercent = 20,
+                borderAnimation = "NONE"
             )
             val newId = studioDao.insertComponent(entity)
             if (project.autoFixSize) {
                 relayoutComponentsForAutoFix(project.id, project.canvasWidthDp)
             }
-            studioDao.updateProject(project.copy(updatedAt = System.currentTimeMillis()))
+            val updatedProj = project.copy(updatedAt = System.currentTimeMillis())
+            studioDao.updateProject(updatedProj)
+            syncOverlayRegistryInBackground(updatedProj)
             _uiState.update {
                 it.copy(
                     selectedComponentId = newId,
                     customEditedKotlinFiles = emptyMap(),
                     statusToast = if (project.autoFixSize)
-                        "Added '$defaultLabel' (Auto-fitted & auto-saved)."
+                        "Added '$defaultLabel' (Auto-fitted & saved)."
                     else
-                        "Added '$defaultLabel' — Customize below (auto-saves in real time)."
+                        "Added '$defaultLabel' — Customize below."
                 )
             }
         }
@@ -908,12 +925,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /**
-     * Resizes the Floating Mod Menu window body (width & height in dp) like an image crop box
-     * when the user drags any corner or edge endpoint handle (disabled when Auto Fix Size is ON).
+     * Resizes the Floating Mod Menu window body (width & height in dp) from its corner handle
+     * (works both when Auto Fix Size is ON and OFF; when Auto Fix Size is ON, widgets auto-fit to cover the new panel width).
      */
     fun resizeActiveProjectCanvas(deltaWidthDp: Int, deltaHeightDp: Int) {
         val project = _uiState.value.activeProject ?: return
-        if (project.autoFixSize) return
         val newW = (project.canvasWidthDp + deltaWidthDp).coerceIn(170, 420)
         val newH = (project.canvasHeightDp + deltaHeightDp).coerceIn(160, 620)
         if (newW == project.canvasWidthDp && newH == project.canvasHeightDp) return
@@ -926,11 +942,15 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             it.copy(
                 activeProject = updatedProject,
                 customEditedKotlinFiles = emptyMap(),
-                statusToast = "Floating Mod Menu Size: ${newW}dp × ${newH}dp"
+                statusToast = "Floating Panel Size: ${newW}dp × ${newH}dp"
             )
         }
         viewModelScope.launch {
             studioDao.updateProject(updatedProject)
+            if (updatedProject.autoFixSize) {
+                relayoutComponentsForAutoFix(updatedProject.id, newW)
+            }
+            syncOverlayRegistryInBackground(updatedProject)
         }
     }
 
@@ -978,6 +998,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 sliderMax = comp.sliderMax
                 currentValue = comp.currentValue
                 linkUrl = comp.linkUrl
+                borderColorHex = comp.borderColorHex
+                borderStrokePercent = comp.borderStrokePercent
+                borderAnimation = comp.borderAnimation
             }
         }
         DynamicOverlayRegistry.updateActiveOverlay(
@@ -990,6 +1013,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             project.autoFixSize,
             specs
         )
+        if (!_uiState.value.isBundledStandaloneApk) {
+            exportProjectToErrorStudioFolder(project, list)
+        }
     }
 
     fun updateComponent(updated: CanvasComponentEntity) {
@@ -1019,33 +1045,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 studioDao.updateComponent(comp)
             }
             syncOverlayRegistryInBackground(updatedProj)
-            if (editedComponent != null && editedComponent.customImagePath.isNotBlank()) {
-                val isCurrentlyActive = if (editedComponent.type == "SLIDER") {
-                    (editedComponent.currentValue.toIntOrNull() ?: 0) > 0
-                } else {
-                    editedComponent.currentValue == "1" || editedComponent.currentValue.equals("true", ignoreCase = true)
-                }
-                withContext(Dispatchers.IO) {
-                    stateWriter.applyWidgetPatchSync(
-                        appContext.filesDir,
-                        "widget_${editedComponent.id}",
-                        editedComponent.type,
-                        editedComponent.targetFilePath,
-                        editedComponent.byteOffsetHex,
-                        editedComponent.offPayloadHex,
-                        editedComponent.onPayloadHex,
-                        editedComponent.currentValue,
-                        isCurrentlyActive,
-                        editedComponent.label,
-                        editedComponent.customImagePath
-                    )
-                }
-            }
             _uiState.update {
                 it.copy(
                     activeProject = updatedProj,
                     customEditedKotlinFiles = emptyMap(),
-                    statusToast = "✅ Design Saved! (${currentList.size} widget(s) locked in for Build)"
+                    statusToast = "✅ Design Saved to Download/ERROR STUDIO! (${currentList.size} widget(s) locked in for Build)"
                 )
             }
         }
@@ -1184,38 +1188,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         }
                     }
                 }
-                val activeVal = if (component.type == ComponentWidgetType.SLIDER.name) {
-                    val cur = component.currentValue.toIntOrNull() ?: 0
-                    if (cur > 0) cur.toString() else "50"
-                } else {
-                    "1"
-                }
                 val updatedComp = component.copy(
                     label = component.label.ifBlank { cleanFileName },
                     customImagePath = destFile.absolutePath,
-                    currentValue = activeVal
+                    onPayloadHex = destFile.absolutePath
                 )
                 studioDao.updateComponent(updatedComp)
                 syncOverlayRegistryInBackground(_uiState.value.activeProject)
-                withContext(Dispatchers.IO) {
-                    stateWriter.applyWidgetPatchSync(
-                        appContext.filesDir,
-                        "widget_${updatedComp.id}",
-                        updatedComp.type,
-                        updatedComp.targetFilePath,
-                        updatedComp.byteOffsetHex,
-                        updatedComp.offPayloadHex,
-                        updatedComp.onPayloadHex,
-                        activeVal,
-                        true,
-                        updatedComp.label,
-                        updatedComp.customImagePath
-                    )
-                }
                 _uiState.update {
                     it.copy(
                         customEditedKotlinFiles = emptyMap(),
-                        statusToast = "✅ File Selected: '$cleanFileName' → Configured for Target Path"
+                        statusToast = "✅ Main File Selected: '$cleanFileName' (Will replace Target File when widget is turned ON in Floating Window)"
                     )
                 }
             } catch (e: Exception) {
@@ -1235,30 +1218,46 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             try {
                 val soundDir = File(appContext.filesDir, "component_sounds").apply { mkdirs() }
                 val tag = if (isOffSound) "off" else "on"
-                val destFile = File(soundDir, "snd_${tag}_${component.id}_${System.currentTimeMillis()}.mp3")
-                appContext.contentResolver.openInputStream(uri)?.use { input ->
-                    FileOutputStream(destFile).use { output ->
-                        input.copyTo(output)
+                val resolvedName = resolvePickedUriDisplayName(
+                    uri,
+                    "voice_${tag}_${component.id}_${System.currentTimeMillis()}.mp3"
+                )
+                val destFile = File(soundDir, "${tag}_${component.id}_$resolvedName")
+                withContext(Dispatchers.IO) {
+                    appContext.contentResolver.openInputStream(uri)?.use { input ->
+                        FileOutputStream(destFile).use { output ->
+                            input.copyTo(output)
+                        }
                     }
                 }
+                val latestComp = withContext(Dispatchers.IO) {
+                    studioDao.getComponentsForProjectSync(component.projectId)
+                        .find { it.id == component.id } ?: component
+                }
                 val updated = if (isOffSound) {
-                    component.copy(
+                    latestComp.copy(
                         offSoundTrigger = SoundTriggerPlayer.SOUND_CUSTOM_FILE,
                         offCustomSoundPath = destFile.absolutePath
                     )
                 } else {
-                    component.copy(
+                    latestComp.copy(
                         soundTrigger = SoundTriggerPlayer.SOUND_CUSTOM_FILE,
                         customSoundPath = destFile.absolutePath
                     )
                 }
                 updateComponent(updated)
+                SoundTriggerPlayer.playSoundTrigger(
+                    appContext,
+                    null,
+                    SoundTriggerPlayer.SOUND_CUSTOM_FILE,
+                    destFile.absolutePath
+                )
                 _uiState.update {
                     it.copy(
                         statusToast = if (isOffSound)
-                            "Custom OFF sound bound to '${component.label}'."
+                            "🎵 OFF Voice/Sound Selected: '$resolvedName' for '${updated.label}'"
                         else
-                            "Custom ON sound bound to '${component.label}'."
+                            "🎵 ON Voice/Sound Selected: '$resolvedName' for '${updated.label}'"
                     )
                 }
             } catch (e: Exception) {
@@ -1279,7 +1278,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val isTurningOn: Boolean
 
         when (component.type) {
-            ComponentWidgetType.LINK.name -> {
+            ComponentWidgetType.TEXT.name -> {
+                return
+            }
+            ComponentWidgetType.LINK.name, ComponentWidgetType.IMAGE.name -> {
                 val rawUrl = component.linkUrl.trim().ifEmpty { component.onPayloadHex.trim() }
                 if (rawUrl.isNotEmpty()) {
                     val formatted = if (rawUrl.startsWith("http://") || rawUrl.startsWith("https://")) rawUrl else "https://$rawUrl"
@@ -1383,16 +1385,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 updatedComp.label,
                 updatedComp.customImagePath
             )
-            val resolvedFile = stateWriter.resolveTargetFile(appContext.filesDir, updatedComp.targetFilePath)
-            val preview = stateWriter.readTargetFilePreview(appContext.filesDir, updatedComp.targetFilePath)
-            _uiState.update {
-                it.copy(
-                    statusToast = if (ok) {
-                        "✅ Modified '${resolvedFile.name}' → $preview"
-                    } else {
-                        "⚠️ Cannot write '${resolvedFile.absolutePath}'. Tap 'Grant All Files Access' in Path settings!"
-                    }
-                )
+            if (ok) {
+                val resolvedFile = stateWriter.resolveTargetFile(appContext.filesDir, updatedComp.targetFilePath)
+                _uiState.update {
+                    it.copy(
+                        statusToast = if (isTurningOn) {
+                            "✅ Applied '${updatedComp.label}' → ${resolvedFile.name}"
+                        } else {
+                            "↩️ Restored original '${resolvedFile.name}'"
+                        }
+                    )
+                }
             }
         }
     }
@@ -1417,16 +1420,20 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun refreshOverlayPermission() {
         ShizukuPrivilegeBridge.probeShizukuBinder(appContext)
+        val hasStorage = LocalConfigStateWriter.hasStoragePermissionGranted(appContext)
         _uiState.update {
             it.copy(
                 hasOverlayPermission = Settings.canDrawOverlays(appContext),
-                hasStoragePermission = LocalConfigStateWriter.hasStoragePermissionGranted(appContext),
+                hasStoragePermission = hasStorage,
                 isSystemOverlayRunning = FloatingDashboardService.isRunning(),
                 shizukuStatusSummary = ShizukuPrivilegeBridge.getStatusSummary(appContext),
                 isShizukuReady = ShizukuPrivilegeBridge.isShizukuReady(appContext),
                 isShizukuRunning = ShizukuPrivilegeBridge.isShizukuRunning(appContext),
                 isShizukuInstalled = ShizukuPrivilegeBridge.isShizukuInstalled(appContext)
             )
+        }
+        if (hasStorage && !_uiState.value.isBundledStandaloneApk) {
+            syncAndImportProjectsFromErrorStudioFolder(silent = true)
         }
     }
 
@@ -1616,6 +1623,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 sliderMax = comp.sliderMax
                 currentValue = comp.currentValue
                 linkUrl = comp.linkUrl
+                borderColorHex = comp.borderColorHex
+                borderStrokePercent = comp.borderStrokePercent
+                borderAnimation = comp.borderAnimation
             }
         }
 
@@ -1831,6 +1841,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         sliderMax = comp.sliderMax
                         currentValue = comp.currentValue
                         linkUrl = comp.linkUrl
+                        borderColorHex = comp.borderColorHex
+                        borderStrokePercent = comp.borderStrokePercent
+                        borderAnimation = comp.borderAnimation
                     }
                 }
                 DynamicOverlayRegistry.updateActiveOverlay(
@@ -3090,6 +3103,340 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             } catch (e: Exception) {
                 _uiState.update {
                     it.copy(aiCompiledApkSummary = "APK Build Error: ${e.message}")
+                }
+            }
+        }
+    }
+
+    private fun getErrorStudioDirectories(): List<File> {
+        val dirs = mutableListOf<File>()
+        try {
+            val pubDownload = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+            if (pubDownload != null) {
+                dirs.add(File(pubDownload, "ERROR STUDIO"))
+            }
+        } catch (_: Exception) {
+        }
+        val sdDownload = File("/storage/emulated/0/Download/ERROR STUDIO")
+        if (dirs.none { it.absolutePath == sdDownload.absolutePath }) {
+            dirs.add(sdDownload)
+        }
+        val appExtDownload = appContext.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS)
+        if (appExtDownload != null) {
+            val extStudio = File(appExtDownload, "ERROR STUDIO")
+            if (dirs.none { it.absolutePath == extStudio.absolutePath }) {
+                dirs.add(extStudio)
+            }
+        }
+        return dirs
+    }
+
+    private fun projectFileNameForErrorStudio(project: StudioProjectEntity): String {
+        val raw = project.name.ifBlank { project.projectName.ifBlank { project.packageName } }
+        val safeSlug = raw.trim().lowercase(Locale.US)
+            .replace(Regex("[^a-z0-9]+"), "_")
+            .trim('_')
+            .ifEmpty { "project_${project.id}" }
+        return "${safeSlug}_project.json"
+    }
+
+    private fun serializeProjectAndComponentsToJson(
+        project: StudioProjectEntity,
+        components: List<CanvasComponentEntity>
+    ): String {
+        val root = org.json.JSONObject()
+        root.put("errorStudioProjectFormat", 1)
+        root.put("name", project.name)
+        root.put("packageName", project.packageName)
+        root.put("projectName", project.projectName)
+        root.put("overlayTitle", project.overlayTitle)
+        root.put("appLogoPath", project.appLogoPath)
+        root.put("floatingLogoPath", project.floatingLogoPath)
+        root.put("versionCode", project.versionCode)
+        root.put("versionName", project.versionName)
+        root.put("minSdk", project.minSdk)
+        root.put("targetSdk", project.targetSdk)
+        root.put("canvasWidthDp", project.canvasWidthDp)
+        root.put("canvasHeightDp", project.canvasHeightDp)
+        root.put("canvasBgColorHex", project.canvasBgColorHex)
+        root.put("canvasBgImagePath", project.canvasBgImagePath)
+        root.put("autoFixSize", project.autoFixSize)
+        root.put("defaultTargetFilePath", project.defaultTargetFilePath)
+        root.put("createdAt", project.createdAt)
+        root.put("updatedAt", project.updatedAt)
+
+        val arr = org.json.JSONArray()
+        for (c in components) {
+            val item = org.json.JSONObject()
+            item.put("type", c.type)
+            item.put("label", c.label)
+            item.put("posXDp", c.posXDp)
+            item.put("posYDp", c.posYDp)
+            item.put("widthDp", c.widthDp)
+            item.put("heightDp", c.heightDp)
+            item.put("bgColorHex", c.bgColorHex)
+            item.put("textColorHex", c.textColorHex)
+            item.put("bgImagePath", c.bgImagePath)
+            item.put("customImagePath", c.customImagePath)
+            item.put("soundTrigger", c.soundTrigger)
+            item.put("customSoundPath", c.customSoundPath)
+            item.put("offSoundTrigger", c.offSoundTrigger)
+            item.put("offCustomSoundPath", c.offCustomSoundPath)
+            item.put("targetFilePath", c.targetFilePath)
+            item.put("byteOffsetHex", c.byteOffsetHex)
+            item.put("onPayloadHex", c.onPayloadHex)
+            item.put("offPayloadHex", c.offPayloadHex)
+            item.put("sliderMax", c.sliderMax)
+            item.put("currentValue", c.currentValue)
+            item.put("linkUrl", c.linkUrl)
+            item.put("borderColorHex", c.borderColorHex)
+            item.put("borderStrokePercent", c.borderStrokePercent)
+            item.put("borderAnimation", c.borderAnimation)
+            arr.put(item)
+        }
+        root.put("components", arr)
+        return root.toString(2)
+    }
+
+    fun exportProjectToErrorStudioFolder(
+        project: StudioProjectEntity,
+        components: List<CanvasComponentEntity>
+    ) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val jsonText = serializeProjectAndComponentsToJson(project, components)
+                val fileName = projectFileNameForErrorStudio(project)
+                var wrotePublic = false
+                for (dir in getErrorStudioDirectories()) {
+                    try {
+                        if (!dir.exists()) dir.mkdirs()
+                        if (dir.exists() && dir.canWrite()) {
+                            File(dir, fileName).writeText(jsonText, Charsets.UTF_8)
+                            if (dir.absolutePath.contains("/Download/ERROR STUDIO")) {
+                                wrotePublic = true
+                            }
+                        }
+                    } catch (_: Exception) {
+                    }
+                }
+                if (!wrotePublic && Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    try {
+                        val resolver = appContext.contentResolver
+                        val collection = MediaStore.Downloads.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+                        try {
+                            resolver.delete(
+                                collection,
+                                "${MediaStore.Downloads.DISPLAY_NAME} = ?",
+                                arrayOf(fileName)
+                            )
+                        } catch (_: Exception) {
+                        }
+                        val values = ContentValues().apply {
+                            put(MediaStore.Downloads.DISPLAY_NAME, fileName)
+                            put(MediaStore.Downloads.MIME_TYPE, "application/json")
+                            put(MediaStore.Downloads.RELATIVE_PATH, "${Environment.DIRECTORY_DOWNLOADS}/ERROR STUDIO")
+                            put(MediaStore.Downloads.IS_PENDING, 1)
+                        }
+                        val uri = resolver.insert(collection, values)
+                        if (uri != null) {
+                            resolver.openOutputStream(uri)?.use { out ->
+                                out.write(jsonText.toByteArray(Charsets.UTF_8))
+                            }
+                            values.clear()
+                            values.put(MediaStore.Downloads.IS_PENDING, 0)
+                            resolver.update(uri, values, null, null)
+                        }
+                    } catch (_: Exception) {
+                    }
+                }
+            } catch (_: Exception) {
+            }
+        }
+    }
+
+    private fun deleteProjectFromErrorStudioFolder(project: StudioProjectEntity) {
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val fileName = projectFileNameForErrorStudio(project)
+                for (dir in getErrorStudioDirectories()) {
+                    try {
+                        val f = File(dir, fileName)
+                        if (f.exists()) f.delete()
+                    } catch (_: Exception) {
+                    }
+                }
+            } catch (_: Exception) {
+            }
+        }
+    }
+
+    private suspend fun importSingleProjectJsonText(
+        jsonText: String,
+        overwriteExisting: Boolean = false
+    ): StudioProjectEntity? {
+        return try {
+            val obj = org.json.JSONObject(jsonText)
+            val name = obj.optString("name", "").ifBlank { obj.optString("projectName", "Imported Project") }
+            val pkg = obj.optString("packageName", "com.errorstudio.imported")
+            val existingProjects = studioDao.getAllProjectsSync()
+            val match = existingProjects.firstOrNull {
+                (pkg.isNotBlank() && it.packageName.equals(pkg, ignoreCase = true) && it.name.equals(name, ignoreCase = true)) ||
+                    (it.name.equals(name, ignoreCase = true) && name.isNotBlank())
+            }
+            if (match != null && !overwriteExisting) {
+                return null
+            }
+
+            val baseProject = StudioProjectEntity(
+                id = match?.id ?: 0L,
+                name = name,
+                packageName = pkg,
+                projectName = obj.optString("projectName", name),
+                overlayTitle = obj.optString("overlayTitle", name),
+                appLogoPath = obj.optString("appLogoPath", ""),
+                floatingLogoPath = obj.optString("floatingLogoPath", ""),
+                versionCode = obj.optInt("versionCode", 1),
+                versionName = obj.optString("versionName", "1.0"),
+                minSdk = obj.optInt("minSdk", 24),
+                targetSdk = obj.optInt("targetSdk", 36),
+                canvasWidthDp = obj.optInt("canvasWidthDp", 260),
+                canvasHeightDp = obj.optInt("canvasHeightDp", 320),
+                canvasBgColorHex = obj.optString("canvasBgColorHex", "#FFFFFF"),
+                canvasBgImagePath = obj.optString("canvasBgImagePath", ""),
+                autoFixSize = obj.optBoolean("autoFixSize", false),
+                defaultTargetFilePath = obj.optString("defaultTargetFilePath", ""),
+                createdAt = obj.optLong("createdAt", System.currentTimeMillis()),
+                updatedAt = System.currentTimeMillis()
+            )
+
+            val projectId = if (match != null) {
+                studioDao.updateProject(baseProject)
+                studioDao.deleteAllComponentsForProject(match.id)
+                match.id
+            } else {
+                studioDao.insertProject(baseProject)
+            }
+
+            val arr = obj.optJSONArray("components")
+            if (arr != null) {
+                for (i in 0 until arr.length()) {
+                    val c = arr.optJSONObject(i) ?: continue
+                    val comp = CanvasComponentEntity(
+                        projectId = projectId,
+                        type = c.optString("type", c.optString("widgetType", ComponentWidgetType.TOGGLE.name)),
+                        label = c.optString("label", "Widget #${i + 1}"),
+                        posXDp = c.optInt("posXDp", c.optInt("x", 10)),
+                        posYDp = c.optInt("posYDp", c.optInt("y", 10 + i * 48)),
+                        widthDp = c.optInt("widthDp", c.optInt("width", 190)),
+                        heightDp = c.optInt("heightDp", c.optInt("height", 44)),
+                        bgColorHex = c.optString("bgColorHex", c.optString("bgHex", "#FFFFFF")),
+                        textColorHex = c.optString("textColorHex", c.optString("textHex", "#0F172A")),
+                        bgImagePath = c.optString("bgImagePath", ""),
+                        customImagePath = c.optString("customImagePath", ""),
+                        soundTrigger = c.optString("soundTrigger", c.optString("onSound", "CLICK")),
+                        customSoundPath = c.optString("customSoundPath", ""),
+                        offSoundTrigger = c.optString("offSoundTrigger", c.optString("offSound", "POP")),
+                        offCustomSoundPath = c.optString("offCustomSoundPath", ""),
+                        targetFilePath = c.optString("targetFilePath", c.optString("targetFile", "")),
+                        byteOffsetHex = c.optString("byteOffsetHex", c.optString("offsetHex", "0x04")),
+                        onPayloadHex = c.optString("onPayloadHex", c.optString("onHex", "On")),
+                        offPayloadHex = c.optString("offPayloadHex", c.optString("offHex", "Off")),
+                        sliderMax = c.optInt("sliderMax", 100),
+                        currentValue = c.optString("currentValue", "0"),
+                        linkUrl = c.optString("linkUrl", ""),
+                        borderColorHex = c.optString("borderColorHex", "#38BDF8"),
+                        borderStrokePercent = c.optInt("borderStrokePercent", 20),
+                        borderAnimation = c.optString("borderAnimation", "NONE")
+                    )
+                    studioDao.insertComponent(comp)
+                }
+            }
+            studioDao.getProjectById(projectId) ?: baseProject.copy(id = projectId)
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    fun syncAndImportProjectsFromErrorStudioFolder(silent: Boolean = false) {
+        viewModelScope.launch(Dispatchers.IO) {
+            var importedCount = 0
+            try {
+                for (dir in getErrorStudioDirectories()) {
+                    if (!dir.exists()) {
+                        try {
+                            dir.mkdirs()
+                        } catch (_: Exception) {
+                        }
+                    }
+                    val files = dir.listFiles { f -> f.isFile && f.name.endsWith(".json", ignoreCase = true) }
+                        ?: continue
+                    for (f in files) {
+                        try {
+                            val text = f.readText(Charsets.UTF_8)
+                            val imported = importSingleProjectJsonText(text, overwriteExisting = false)
+                            if (imported != null) {
+                                importedCount++
+                            }
+                        } catch (_: Exception) {
+                        }
+                    }
+                }
+                // Also export any existing local DB projects into Download/ERROR STUDIO so the folder always has all projects
+                val allDbProjects = studioDao.getAllProjectsSync()
+                for (proj in allDbProjects) {
+                    val comps = studioDao.getComponentsForProjectSync(proj.id)
+                    exportProjectToErrorStudioFolder(proj, comps)
+                }
+            } catch (_: Exception) {
+            }
+            if (!silent || importedCount > 0) {
+                withContext(Dispatchers.Main) {
+                    _uiState.update {
+                        it.copy(
+                            statusToast = if (importedCount > 0) {
+                                "📂 Restored $importedCount project(s) from Download/ERROR STUDIO!"
+                            } else {
+                                "📂 Synced projects with Download/ERROR STUDIO folder."
+                            }
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    fun importProjectFromUri(uri: Uri) {
+        viewModelScope.launch {
+            try {
+                val jsonText = withContext(Dispatchers.IO) {
+                    appContext.contentResolver.openInputStream(uri)?.use { input ->
+                        input.bufferedReader(Charsets.UTF_8).readText()
+                    } ?: ""
+                }
+                if (jsonText.isBlank()) {
+                    _uiState.update { it.copy(statusToast = "⚠️ Selected file is empty.") }
+                    return@launch
+                }
+                val imported = withContext(Dispatchers.IO) {
+                    importSingleProjectJsonText(jsonText, overwriteExisting = true)
+                }
+                if (imported != null) {
+                    val comps = withContext(Dispatchers.IO) {
+                        studioDao.getComponentsForProjectSync(imported.id)
+                    }
+                    exportProjectToErrorStudioFolder(imported, comps)
+                    openExistingProject(imported)
+                    _uiState.update {
+                        it.copy(statusToast = "✅ Imported '${imported.name}' (${comps.size} widgets) & saved to Download/ERROR STUDIO!")
+                    }
+                } else {
+                    _uiState.update {
+                        it.copy(statusToast = "⚠️ Invalid ERROR STUDIO project JSON file.")
+                    }
+                }
+            } catch (e: Exception) {
+                _uiState.update {
+                    it.copy(statusToast = "⚠️ Failed to import project: ${e.message}")
                 }
             }
         }

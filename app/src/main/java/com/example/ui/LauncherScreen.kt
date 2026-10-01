@@ -175,6 +175,8 @@ fun StudioProjectLauncherScreen(
         newFloatingLogoPath: String
     ) -> Unit,
     onImportLogoUri: (Uri, (String) -> Unit) -> Unit,
+    onSyncErrorStudioFolder: () -> Unit = {},
+    onImportProjectUri: (Uri) -> Unit = {},
     onRefreshPermissions: () -> Unit,
     onOpenOnlineAiMode: () -> Unit,
     onBackToWelcome: () -> Unit = onRefreshPermissions
@@ -212,6 +214,8 @@ fun StudioProjectLauncherScreen(
         hasOverlayPermission = uiState.hasOverlayPermission,
         onRefreshPermissions = onRefreshPermissions,
         onImportLogoUri = onImportLogoUri,
+        onSyncErrorStudioFolder = onSyncErrorStudioFolder,
+        onImportProjectUri = onImportProjectUri,
         onCreateProjectWithLogo = { name, pkg, overlayTitle, logoPath ->
             onCreateProject(
                 name,
@@ -418,6 +422,8 @@ fun LauncherScreen(
     hasOverlayPermission: Boolean = true,
     onRefreshPermissions: () -> Unit = {},
     onImportLogoUri: (Uri, (String) -> Unit) -> Unit = { _, _ -> },
+    onSyncErrorStudioFolder: () -> Unit = {},
+    onImportProjectUri: (Uri) -> Unit = {},
     onCreateProjectWithLogo: (String, String, String, String) -> Unit = { _, _, _, _ -> },
     onCreateProject: (String, String, String) -> Unit = { name, pkg, title ->
         onCreateProjectWithLogo(name, pkg, title, "")
@@ -448,20 +454,7 @@ fun LauncherScreen(
         contract = ActivityResultContracts.OpenDocument()
     ) { uri ->
         if (uri != null) {
-            val importedName = uri.lastPathSegment
-                ?.substringAfterLast('/')
-                ?.substringBeforeLast('.')
-                ?.replace(Regex("[^a-zA-Z0-9_ -]"), "")
-                ?.trim()
-                ?.ifEmpty { "Imported App" }
-                ?: "Imported App"
-            val slug = importedName.lowercase().replace(Regex("[^a-z0-9]+"), "")
-            onCreateProjectWithLogo(
-                importedName,
-                "com.appstudio.${slug.ifEmpty { "imported" }}",
-                "$importedName Panel",
-                ""
-            )
+            onImportProjectUri(uri)
         }
     }
 
@@ -620,6 +613,10 @@ fun LauncherScreen(
                 AppStudioSubScreen.IMPORT_PROJECT -> {
                     ImportProjectScreenContent(
                         onBack = { currentSubScreen = AppStudioSubScreen.HOME },
+                        onSyncErrorStudioFolder = {
+                            onSyncErrorStudioFolder()
+                            currentSubScreen = AppStudioSubScreen.SAVED_PROJECTS
+                        },
                         onImportFromDevice = {
                             importDeviceFileLauncher.launch(arrayOf("*/*"))
                         },
@@ -2074,6 +2071,7 @@ private fun StudioPermissionsSectionCard(
 @Composable
 private fun ImportProjectScreenContent(
     onBack: () -> Unit,
+    onSyncErrorStudioFolder: () -> Unit = {},
     onImportFromDevice: () -> Unit,
     onImportFromGitHub: () -> Unit,
     onImportFromUrl: () -> Unit,
@@ -2105,7 +2103,7 @@ private fun ImportProjectScreenContent(
                     fontWeight = FontWeight.ExtraBold
                 )
                 Text(
-                    text = "Bring your existing project into App Studio",
+                    text = "All projects are saved in Download/ERROR STUDIO",
                     color = StudioTextSecondary,
                     fontSize = 13.sp
                 )
@@ -2121,8 +2119,17 @@ private fun ImportProjectScreenContent(
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             ImportSourceCard(
-                title = "From Device",
-                subtitle = "Import from your device storage",
+                title = "Download/ERROR STUDIO Folder",
+                subtitle = "Auto-scan & restore all projects from Download/ERROR STUDIO",
+                icon = Icons.Default.FolderOpen,
+                iconBgColor = Color(0xFF10B981),
+                onClick = onSyncErrorStudioFolder,
+                testTag = "import_sync_error_studio_folder_card"
+            )
+
+            ImportSourceCard(
+                title = "From Device (Pick Project File)",
+                subtitle = "Select a project .json file from Download/ERROR STUDIO",
                 icon = Icons.Default.FileDownload,
                 iconBgColor = Color(0xFF0F766E),
                 onClick = onImportFromDevice,

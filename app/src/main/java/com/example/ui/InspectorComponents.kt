@@ -141,6 +141,48 @@ private val DefaultWidgetTextPresets = listOf(
     "#FB923C" to "Orange"
 )
 
+private val BuiltInVoiceAndSoundPresets = listOf(
+    "VOICE_ON" to "🗣️ Voice: Option Activated",
+    "VOICE_OFF" to "🗣️ Voice: Option Deactivated",
+    "VOICE_HACK_ON" to "🗣️ Voice: Hack Activated",
+    "VOICE_HACK_OFF" to "🗣️ Voice: Hack Deactivated",
+    "VOICE_MOD_ON" to "🗣️ Voice: Mod Enabled",
+    "VOICE_MOD_OFF" to "🗣️ Voice: Mod Disabled",
+    "ACTIVATE" to "🗣️ Voice: Target File Patched",
+    "DEACTIVATE" to "🗣️ Voice: Original Restored",
+    "POWER_UP" to "🚀 Power Up",
+    "POWER_DOWN" to "📉 Power Down",
+    "CONFIRM_TONE" to "✅ Confirm Beep",
+    "DIGITAL_BEEP" to "🔔 Digital Beep",
+    "LASER_ZAP" to "🔫 Laser Zap",
+    "CYBER_PULSE" to "⚡ Cyber Pulse",
+    "SWITCH_POP" to "🔘 Switch Pop",
+    "SYSTEM_CLICK" to "👆 UI Click",
+    "WARNING" to "⚠️ Alert Siren",
+    "NONE" to "🔇 Silent (None)",
+    "CUSTOM_FILE" to "🎵 Custom Voice File"
+)
+
+private val DefaultWidgetBorderColorPresets = listOf(
+    "#00000000" to "Transparent",
+    "#38BDF8" to "Neon Cyan",
+    "#10B981" to "Emerald",
+    "#8B5CF6" to "Electric Purple",
+    "#EF4444" to "Crimson Red",
+    "#FACC15" to "Cyber Gold",
+    "#EC4899" to "Neon Pink",
+    "#FFFFFF" to "Pure White",
+    "#0F172A" to "Dark Slate"
+)
+
+private val WidgetBorderAnimationPresets = listOf(
+    "NONE" to "Static (No Anim)",
+    "PULSE" to "Pulse Breath",
+    "RAINBOW" to "Rainbow RGB",
+    "NEON_BLINK" to "Neon Blink",
+    "GLOW" to "Soft Glow"
+)
+
 private val InspectorDarkBg = Color(0xFF050B18)
 private val InspectorFieldBg = Color(0xFF081329)
 private val InspectorFieldBorder = Color(0xFF1B325F)
@@ -190,6 +232,7 @@ fun PropertyInspectorBottomDock(
         isAutoFixSize = isAutoFixSize,
         onToggleAutoFixSize = onToggleAutoFixSize,
         onPickImageUri = onPickImageUri,
+        onPickSoundUri = onPickSoundUri,
         onOpenEditFloatingPanel = onOpenEditFloatingPanel,
         onSaveComponent = { updated ->
             onUpdateComponent(updated)
@@ -208,6 +251,7 @@ fun ComponentPropertyInspectorSheet(
     isAutoFixSize: Boolean = true,
     onToggleAutoFixSize: () -> Unit = {},
     onPickImageUri: (Uri) -> Unit = {},
+    onPickSoundUri: (Uri, Boolean) -> Unit = { _, _ -> },
     onOpenEditFloatingPanel: () -> Unit = {},
     onSaveComponent: (CanvasComponentEntity) -> Unit,
     onDuplicateComponent: (CanvasComponentEntity) -> Unit,
@@ -225,10 +269,10 @@ fun ComponentPropertyInspectorSheet(
     var bgImagePath by remember(component.id, component.bgImagePath) {
         mutableStateOf(component.bgImagePath)
     }
-    var posX by remember(component.id) { mutableStateOf(component.posXDp.toString()) }
-    var posY by remember(component.id) { mutableStateOf(component.posYDp.toString()) }
-    var widthDp by remember(component.id) { mutableStateOf(component.widthDp.toString()) }
-    var heightDp by remember(component.id) { mutableStateOf(component.heightDp.toString()) }
+    var posX by remember(component.id, component.posXDp) { mutableStateOf(component.posXDp.toString()) }
+    var posY by remember(component.id, component.posYDp) { mutableStateOf(component.posYDp.toString()) }
+    var widthDp by remember(component.id, component.widthDp) { mutableStateOf(component.widthDp.toString()) }
+    var heightDp by remember(component.id, component.heightDp) { mutableStateOf(component.heightDp.toString()) }
     var byteOffset by remember(component.id) { mutableStateOf(component.byteOffsetHex) }
     var onPayload by remember(component.id) { mutableStateOf(component.onPayloadHex) }
     var offPayload by remember(component.id) { mutableStateOf(component.offPayloadHex) }
@@ -236,11 +280,31 @@ fun ComponentPropertyInspectorSheet(
     var textHex by remember(component.id) { mutableStateOf(component.textColorHex) }
     var currentValue by remember(component.id) { mutableStateOf(component.currentValue) }
     var targetFile by remember(component.id) { mutableStateOf(component.targetFilePath) }
+    var linkUrl by remember(component.id, component.linkUrl) { mutableStateOf(component.linkUrl) }
+    var soundTrigger by remember(component.id, component.soundTrigger) { mutableStateOf(component.soundTrigger) }
+    var customSoundPath by remember(component.id, component.customSoundPath) { mutableStateOf(component.customSoundPath) }
+    var offSoundTrigger by remember(component.id, component.offSoundTrigger) { mutableStateOf(component.offSoundTrigger) }
+    var offCustomSoundPath by remember(component.id, component.offCustomSoundPath) { mutableStateOf(component.offCustomSoundPath) }
+    var borderColorHex by remember(component.id, component.borderColorHex) { mutableStateOf(component.borderColorHex) }
+    var borderStrokePercent by remember(component.id, component.borderStrokePercent) { mutableStateOf(component.borderStrokePercent) }
+    var borderAnimation by remember(component.id, component.borderAnimation) { mutableStateOf(component.borderAnimation) }
+
+    val isTextViewWidget = component.type == "TEXT"
+    val isLinkOpenerWidget = component.type == "LINK" || component.type == "IMAGE"
+    val isExecutableFileWidget = !isTextViewWidget && !isLinkOpenerWidget
 
     fun buildUpdated(
         overrideBgHex: String = bgHex,
         overrideTextHex: String = textHex,
-        overrideBgImagePath: String = bgImagePath
+        overrideBgImagePath: String = bgImagePath,
+        overrideBorderColorHex: String = borderColorHex,
+        overrideBorderStrokePercent: Int = borderStrokePercent,
+        overrideBorderAnimation: String = borderAnimation,
+        overrideSoundTrigger: String = soundTrigger,
+        overrideCustomSoundPath: String = customSoundPath,
+        overrideOffSoundTrigger: String = offSoundTrigger,
+        overrideOffCustomSoundPath: String = offCustomSoundPath,
+        overrideLinkUrl: String = linkUrl
     ): CanvasComponentEntity {
         return component.copy(
             label = label.trim().ifEmpty { component.label },
@@ -248,16 +312,109 @@ fun ComponentPropertyInspectorSheet(
             bgImagePath = overrideBgImagePath.trim(),
             posXDp = posX.toIntOrNull()?.coerceAtLeast(0) ?: component.posXDp,
             posYDp = posY.toIntOrNull()?.coerceAtLeast(0) ?: component.posYDp,
-            widthDp = widthDp.toIntOrNull()?.coerceIn(48, 400) ?: component.widthDp,
-            heightDp = heightDp.toIntOrNull()?.coerceIn(32, 300) ?: component.heightDp,
+            widthDp = widthDp.toIntOrNull()?.coerceIn(36, 400) ?: component.widthDp,
+            heightDp = heightDp.toIntOrNull()?.coerceIn(28, 300) ?: component.heightDp,
             byteOffsetHex = byteOffset.trim().ifEmpty { "0x04" },
             onPayloadHex = onPayload.trim().ifEmpty { "On" },
             offPayloadHex = offPayload.trim().ifEmpty { "Off" },
             bgColorHex = overrideBgHex.trim().ifEmpty { "#131C33" },
             textColorHex = overrideTextHex.trim().ifEmpty { "#FFFFFF" },
             currentValue = currentValue.trim(),
-            targetFilePath = targetFile.trim()
+            targetFilePath = targetFile.trim(),
+            linkUrl = overrideLinkUrl.trim(),
+            soundTrigger = overrideSoundTrigger.trim().ifEmpty { "NONE" },
+            customSoundPath = overrideCustomSoundPath.trim(),
+            offSoundTrigger = overrideOffSoundTrigger.trim().ifEmpty { "NONE" },
+            offCustomSoundPath = overrideOffCustomSoundPath.trim(),
+            borderColorHex = overrideBorderColorHex.trim().ifEmpty { "#38BDF8" },
+            borderStrokePercent = overrideBorderStrokePercent.coerceIn(0, 100),
+            borderAnimation = overrideBorderAnimation.trim().ifEmpty { "NONE" }
         )
+    }
+
+    fun copyPickedAudioUriToLocalFile(uri: Uri, isOffSound: Boolean): File? {
+        return try {
+            val soundDir = File(context.filesDir, "component_sounds").apply { mkdirs() }
+            val tag = if (isOffSound) "off" else "on"
+            var rawName = ""
+            try {
+                context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+                    val idx = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+                    if (idx >= 0 && cursor.moveToFirst()) {
+                        rawName = cursor.getString(idx) ?: ""
+                    }
+                }
+            } catch (_: Exception) {
+            }
+            if (rawName.isBlank()) {
+                rawName = uri.lastPathSegment?.substringAfterLast('/')?.substringAfterLast(':') ?: ""
+            }
+            val cleanName = rawName.replace(Regex("[^a-zA-Z0-9._-]"), "_")
+                .ifBlank { "voice_${tag}_${component.id}_${System.currentTimeMillis()}.mp3" }
+            val destFile = File(soundDir, "${tag}_${component.id}_$cleanName")
+            context.contentResolver.openInputStream(uri)?.use { input ->
+                FileOutputStream(destFile).use { output ->
+                    input.copyTo(output)
+                }
+            }
+            if (destFile.exists() && destFile.length() > 0L) destFile else null
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    val onVoiceFilePickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri != null) {
+            val copied = copyPickedAudioUriToLocalFile(uri, isOffSound = false)
+            if (copied != null) {
+                soundTrigger = "CUSTOM_FILE"
+                customSoundPath = copied.absolutePath
+                onSaveComponent(
+                    buildUpdated(
+                        overrideSoundTrigger = "CUSTOM_FILE",
+                        overrideCustomSoundPath = copied.absolutePath
+                    )
+                )
+                com.example.engine.SoundTriggerPlayer.playSoundTrigger(
+                    context,
+                    null,
+                    "CUSTOM_FILE",
+                    copied.absolutePath
+                )
+            } else {
+                soundTrigger = "CUSTOM_FILE"
+                onPickSoundUri(uri, false)
+            }
+        }
+    }
+
+    val offVoiceFilePickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri != null) {
+            val copied = copyPickedAudioUriToLocalFile(uri, isOffSound = true)
+            if (copied != null) {
+                offSoundTrigger = "CUSTOM_FILE"
+                offCustomSoundPath = copied.absolutePath
+                onSaveComponent(
+                    buildUpdated(
+                        overrideOffSoundTrigger = "CUSTOM_FILE",
+                        overrideOffCustomSoundPath = copied.absolutePath
+                    )
+                )
+                com.example.engine.SoundTriggerPlayer.playSoundTrigger(
+                    context,
+                    null,
+                    "CUSTOM_FILE",
+                    copied.absolutePath
+                )
+            } else {
+                offSoundTrigger = "CUSTOM_FILE"
+                onPickSoundUri(uri, true)
+            }
+        }
     }
 
     // Phone gallery image picker for Widget Background Image
@@ -456,12 +613,12 @@ fun ComponentPropertyInspectorSheet(
                 }
             }
 
-            // Pinned 3 Tabs: General | Style | Advanced
+            // Pinned 4 Tabs: General | Voice / Sound | Style | Advanced
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
-                listOf("General", "Style", "Advanced").forEach { tab ->
+                listOf("General", "Voice / Sound", "Style", "Advanced").forEach { tab ->
                     val isSelected = activeTab == tab
                     Surface(
                         shape = RoundedCornerShape(10.dp),
@@ -479,9 +636,323 @@ fun ComponentPropertyInspectorSheet(
                             Text(
                                 text = tab,
                                 color = if (isSelected) Color.White else Color(0xFFE2E8F0),
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.Bold
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
                             )
+                        }
+                    }
+                }
+            }
+
+            @Composable
+            fun renderVoiceAndSoundTriggerSection() {
+                val onCustomSoundName = remember(customSoundPath) {
+                    if (customSoundPath.isNotBlank()) File(customSoundPath).name else ""
+                }
+                val offCustomSoundName = remember(offCustomSoundPath) {
+                    if (offCustomSoundPath.isNotBlank()) File(offCustomSoundPath).name else ""
+                }
+
+                Column(
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(Color(0xFF09152B))
+                        .border(BorderStroke(1.dp, Color(0xFF1E3A5F)), RoundedCornerShape(12.dp))
+                        .padding(10.dp)
+                ) {
+                    // 1. ON VOICE / SOUND SECTION
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = if (isLinkOpenerWidget) "ON / Click Voice & Sound" else "ON Voice / Sound (Widget ON hone par)",
+                            color = Color(0xFF38BDF8),
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.ExtraBold
+                        )
+                        Surface(
+                            shape = RoundedCornerShape(6.dp),
+                            color = Color(0xFF10B981).copy(alpha = 0.2f),
+                            border = BorderStroke(1.dp, Color(0xFF10B981)),
+                            modifier = Modifier
+                                .clickable {
+                                    com.example.engine.SoundTriggerPlayer.playSoundTrigger(
+                                        context,
+                                        null,
+                                        soundTrigger,
+                                        customSoundPath
+                                    )
+                                }
+                                .testTag("inspector_preview_on_sound_button")
+                        ) {
+                            Text(
+                                text = "▶ Test ON Voice",
+                                color = Color(0xFF6EE7B7),
+                                fontSize = 9.5.sp,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                            )
+                        }
+                    }
+
+                    // Select ON Voice / Audio File Box + Purple Folder Button
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Surface(
+                            shape = RoundedCornerShape(12.dp),
+                            color = InspectorFieldBg,
+                            border = BorderStroke(
+                                1.dp,
+                                if (onCustomSoundName.isNotBlank()) Color(0xFF10B981) else InspectorFieldBorder
+                            ),
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(42.dp)
+                                .clickable {
+                                    onVoiceFilePickerLauncher.launch(arrayOf("audio/*", "*/*"))
+                                }
+                                .testTag("inspector_select_on_voice_file_button")
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .padding(horizontal = 12.dp),
+                                contentAlignment = Alignment.CenterStart
+                            ) {
+                                Text(
+                                    text = if (onCustomSoundName.isNotBlank()) {
+                                        "🎵 ON Voice File: $onCustomSoundName"
+                                    } else {
+                                        "Select ON Voice / Sound File (MP3/WAV/OGG)"
+                                    },
+                                    color = if (onCustomSoundName.isNotBlank()) Color(0xFF6EE7B7) else Color(0xFFCBD5E1),
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                        }
+
+                        Box(
+                            modifier = Modifier
+                                .size(42.dp)
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(InspectorPurpleButton)
+                                .clickable {
+                                    onVoiceFilePickerLauncher.launch(arrayOf("audio/*", "*/*"))
+                                }
+                                .testTag("inspector_on_voice_folder_button"),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Folder,
+                                contentDescription = "Select ON Voice File",
+                                tint = Color.White,
+                                modifier = Modifier.size(19.dp)
+                            )
+                        }
+                    }
+
+                    Text(
+                        text = "Default Inbuilt ON Voices & Sounds:",
+                        color = Color(0xFF94A3B8),
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.SemiBold
+                    )
+
+                    // Horizontal strip of Built-in Default Voices & Sounds for ON
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        BuiltInVoiceAndSoundPresets.forEach { (code, title) ->
+                            val selected = soundTrigger.equals(code, ignoreCase = true)
+                            Surface(
+                                shape = RoundedCornerShape(8.dp),
+                                color = if (selected) InspectorPurpleButton else InspectorFieldBg,
+                                border = BorderStroke(
+                                    1.dp,
+                                    if (selected) Color(0xFF60A5FA) else InspectorFieldBorder
+                                ),
+                                modifier = Modifier
+                                    .clickable {
+                                        soundTrigger = code
+                                        onSaveComponent(buildUpdated(overrideSoundTrigger = code))
+                                        com.example.engine.SoundTriggerPlayer.playSoundTrigger(
+                                            context,
+                                            null,
+                                            code,
+                                            customSoundPath
+                                        )
+                                    }
+                                    .testTag("on_sound_preset_${code.lowercase(Locale.US)}")
+                            ) {
+                                Text(
+                                    text = title,
+                                    color = Color.White,
+                                    fontSize = 10.sp,
+                                    fontWeight = if (selected) FontWeight.ExtraBold else FontWeight.Medium,
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp)
+                                )
+                            }
+                        }
+                    }
+
+                    // 2. OFF VOICE / SOUND SECTION
+                    Spacer(Modifier.height(2.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "OFF Voice / Sound (Widget OFF hone par)",
+                            color = Color(0xFFF87171),
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.ExtraBold
+                        )
+                        Surface(
+                            shape = RoundedCornerShape(6.dp),
+                            color = Color(0xFFEF4444).copy(alpha = 0.2f),
+                            border = BorderStroke(1.dp, Color(0xFFEF4444)),
+                            modifier = Modifier
+                                .clickable {
+                                    com.example.engine.SoundTriggerPlayer.playSoundTrigger(
+                                        context,
+                                        null,
+                                        offSoundTrigger,
+                                        offCustomSoundPath
+                                    )
+                                }
+                                .testTag("inspector_preview_off_sound_button")
+                        ) {
+                            Text(
+                                text = "▶ Test OFF Voice",
+                                color = Color(0xFFFCA5A5),
+                                fontSize = 9.5.sp,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                            )
+                        }
+                    }
+
+                    // Select OFF Voice / Audio File Box + Purple Folder Button
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Surface(
+                            shape = RoundedCornerShape(12.dp),
+                            color = InspectorFieldBg,
+                            border = BorderStroke(
+                                1.dp,
+                                if (offCustomSoundName.isNotBlank()) Color(0xFFEF4444) else InspectorFieldBorder
+                            ),
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(42.dp)
+                                .clickable {
+                                    offVoiceFilePickerLauncher.launch(arrayOf("audio/*", "*/*"))
+                                }
+                                .testTag("inspector_select_off_voice_file_button")
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .padding(horizontal = 12.dp),
+                                contentAlignment = Alignment.CenterStart
+                            ) {
+                                Text(
+                                    text = if (offCustomSoundName.isNotBlank()) {
+                                        "🎵 OFF Voice File: $offCustomSoundName"
+                                    } else {
+                                        "Select OFF Voice / Sound File (MP3/WAV/OGG)"
+                                    },
+                                    color = if (offCustomSoundName.isNotBlank()) Color(0xFFFCA5A5) else Color(0xFFCBD5E1),
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.SemiBold,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                        }
+
+                        Box(
+                            modifier = Modifier
+                                .size(42.dp)
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(Color(0xFFDC2626))
+                                .clickable {
+                                    offVoiceFilePickerLauncher.launch(arrayOf("audio/*", "*/*"))
+                                }
+                                .testTag("inspector_off_voice_folder_button"),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Folder,
+                                contentDescription = "Select OFF Voice File",
+                                tint = Color.White,
+                                modifier = Modifier.size(19.dp)
+                            )
+                        }
+                    }
+
+                    Text(
+                        text = "Default Inbuilt OFF Voices & Sounds:",
+                        color = Color(0xFF94A3B8),
+                        fontSize = 10.sp,
+                        fontWeight = FontWeight.SemiBold
+                    )
+
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        BuiltInVoiceAndSoundPresets.forEach { (code, title) ->
+                            val selected = offSoundTrigger.equals(code, ignoreCase = true)
+                            Surface(
+                                shape = RoundedCornerShape(8.dp),
+                                color = if (selected) Color(0xFFDC2626) else InspectorFieldBg,
+                                border = BorderStroke(
+                                    1.dp,
+                                    if (selected) Color(0xFFFCA5A5) else InspectorFieldBorder
+                                ),
+                                modifier = Modifier
+                                    .clickable {
+                                        offSoundTrigger = code
+                                        onSaveComponent(buildUpdated(overrideOffSoundTrigger = code))
+                                        com.example.engine.SoundTriggerPlayer.playSoundTrigger(
+                                            context,
+                                            null,
+                                            code,
+                                            offCustomSoundPath
+                                        )
+                                    }
+                                    .testTag("off_sound_preset_${code.lowercase(Locale.US)}")
+                            ) {
+                                Text(
+                                    text = title,
+                                    color = Color.White,
+                                    fontSize = 10.sp,
+                                    fontWeight = if (selected) FontWeight.ExtraBold else FontWeight.Medium,
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp)
+                                )
+                            }
                         }
                     }
                 }
@@ -505,10 +976,10 @@ fun ComponentPropertyInspectorSheet(
                             }
                         }
 
-                        // 1. Widget Name
+                        // 1. Widget Name / Text
                         Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                             Text(
-                                text = "Widget Name",
+                                text = if (isTextViewWidget) "Display Text (Text View)" else "Widget Name",
                                 color = Color(0xFFCBD5E1),
                                 fontSize = 11.sp,
                                 fontWeight = FontWeight.Bold
@@ -520,7 +991,11 @@ fun ComponentPropertyInspectorSheet(
                                     onSaveComponent(buildUpdated())
                                 },
                                 placeholder = {
-                                    Text("Button #1", color = InspectorPlaceholderColor, fontSize = 12.sp)
+                                    Text(
+                                        if (isTextViewWidget) "Enter text to show..." else "Widget #1",
+                                        color = InspectorPlaceholderColor,
+                                        fontSize = 12.sp
+                                    )
                                 },
                                 singleLine = true,
                                 shape = RoundedCornerShape(12.dp),
@@ -538,91 +1013,24 @@ fun ComponentPropertyInspectorSheet(
                             )
                         }
 
-                        // 2. Select your main file ("Select file" box + purple folder button on right)
-                        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                            Text(
-                                text = "Select your main file",
-                                color = Color(0xFFCBD5E1),
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.Bold
-                            )
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                Surface(
-                                    shape = RoundedCornerShape(12.dp),
-                                    color = InspectorFieldBg,
-                                    border = BorderStroke(1.dp, InspectorFieldBorder),
-                                    modifier = Modifier
-                                        .weight(1f)
-                                        .height(46.dp)
-                                        .clickable {
-                                            sourceFilePickerLauncher.launch(arrayOf("*/*"))
-                                        }
-                                        .testTag("inspector_main_file_box")
-                                ) {
-                                    Box(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .padding(horizontal = 12.dp),
-                                        contentAlignment = Alignment.CenterStart
-                                    ) {
-                                        Text(
-                                            text = if (selectedFileName.isNotBlank()) selectedFileName else "Select file",
-                                            color = if (selectedFileName.isNotBlank()) Color.White else InspectorPlaceholderColor,
-                                            fontSize = 12.sp,
-                                            fontWeight = if (selectedFileName.isNotBlank()) FontWeight.SemiBold else FontWeight.Medium,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis
-                                        )
-                                    }
-                                }
-
-                                Box(
-                                    modifier = Modifier
-                                        .size(46.dp)
-                                        .clip(RoundedCornerShape(12.dp))
-                                        .background(InspectorPurpleButton)
-                                        .clickable {
-                                            sourceFilePickerLauncher.launch(arrayOf("*/*"))
-                                        }
-                                        .testTag("inspector_select_source_file_button"),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Default.Folder,
-                                        contentDescription = "Select Main File",
-                                        tint = Color.White,
-                                        modifier = Modifier.size(20.dp)
-                                    )
-                                }
-                            }
-                        }
-
-                        // 3. Target Path
-                        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                            Text(
-                                text = "Target Path",
-                                color = Color(0xFFCBD5E1),
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.Bold
-                            )
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
+                        // LINK OPENER ONLY: Link URL input (no Main File or Target Path!)
+                        if (isLinkOpenerWidget) {
+                            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                Text(
+                                    text = "Link URL (Floating Window me click krte hi open hoga)",
+                                    color = Color(0xFF38BDF8),
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
                                 OutlinedTextField(
-                                    value = targetFile,
+                                    value = linkUrl,
                                     onValueChange = {
-                                        targetFile = it
-                                        onSaveComponent(buildUpdated())
+                                        linkUrl = it
+                                        onSaveComponent(buildUpdated(overrideLinkUrl = it))
                                     },
                                     placeholder = {
                                         Text(
-                                            "/storage/emulated/0/app.apk",
+                                            "https://youtube.com or https://t.me/yourchannel",
                                             color = InspectorPlaceholderColor,
                                             fontSize = 12.sp
                                         )
@@ -632,120 +1040,299 @@ fun ComponentPropertyInspectorSheet(
                                     colors = OutlinedTextFieldDefaults.colors(
                                         focusedContainerColor = InspectorFieldBg,
                                         unfocusedContainerColor = InspectorFieldBg,
-                                        focusedBorderColor = Color(0xFF3B82F6),
+                                        focusedBorderColor = Color(0xFF38BDF8),
                                         unfocusedBorderColor = InspectorFieldBorder,
                                         focusedTextColor = Color.White,
                                         unfocusedTextColor = Color.White
                                     ),
                                     modifier = Modifier
-                                        .weight(1f)
-                                        .testTag("inspector_target_path_input")
+                                        .fillMaxWidth()
+                                        .testTag("inspector_link_url_input")
                                 )
-
-                                Box(
-                                    modifier = Modifier
-                                        .size(46.dp)
-                                        .clip(RoundedCornerShape(12.dp))
-                                        .background(InspectorPurpleButton)
-                                        .clickable {
-                                            targetDocumentPickerLauncher.launch(arrayOf("*/*"))
-                                        }
-                                        .testTag("inspector_select_target_path_button"),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Default.Folder,
-                                        contentDescription = "Select Target Path",
-                                        tint = Color.White,
-                                        modifier = Modifier.size(20.dp)
-                                    )
+                                if (linkUrl.isBlank()) {
+                                    Surface(
+                                        shape = RoundedCornerShape(10.dp),
+                                        color = Color(0xFF28111B),
+                                        border = BorderStroke(1.dp, Color(0xFFEF4444)),
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        Text(
+                                            text = "⚠️ Link URL Nhi Dala Hua: Floating window me Link Opener par click karne par link open karne ke liye upar URL dalein.",
+                                            color = Color(0xFFFCA5A5),
+                                            fontSize = 10.5.sp,
+                                            fontWeight = FontWeight.SemiBold,
+                                            modifier = Modifier.padding(10.dp)
+                                        )
+                                    }
                                 }
                             }
+                        }
 
-                            val isRestrictedAndroidPath = remember(targetFile) {
-                                ShizukuPrivilegeBridge.isRestrictedAndroidPath(targetFile)
-                            }
-                            val shizukuReady = ShizukuPrivilegeBridge.isShizukuReady()
-                            val shizukuStatusText = ShizukuPrivilegeBridge.getStatusSummary(context)
-
+                        // TEXT VIEW ONLY: Info banner (no Main File or Target Path!)
+                        if (isTextViewWidget) {
                             Surface(
                                 shape = RoundedCornerShape(10.dp),
-                                color = if (isRestrictedAndroidPath && !shizukuReady) Color(0xFF1F1235) else Color(0xFF09152B),
-                                border = BorderStroke(
-                                    1.dp,
-                                    if (isRestrictedAndroidPath && !shizukuReady) Color(0xFF8B5CF6) else Color(0xFF1E3A5F)
-                                ),
+                                color = Color(0xFF09152B),
+                                border = BorderStroke(1.dp, Color(0xFF1E3A5F)),
                                 modifier = Modifier.fillMaxWidth()
                             ) {
-                                Column(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(10.dp),
-                                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                                Text(
+                                    text = "ℹ️ Text View srif text dikhane ke liye hai (isme Main File ya Target Path ki zaroorat nhi hai).",
+                                    color = Color(0xFFBAE6FD),
+                                    fontSize = 10.5.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    modifier = Modifier.padding(10.dp)
+                                )
+                            }
+                        }
+
+                        // EXECUTABLE WIDGETS ONLY (SWITCH, BUTTON, SLIDER 0-100, EDIT TEXT):
+                        // 2. Select your main file & 3. Target Path + Live Validation Error Box
+                        if (isExecutableFileWidget) {
+                            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                Text(
+                                    text = "Select your main file",
+                                    color = Color(0xFFCBD5E1),
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                                 ) {
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.SpaceBetween,
-                                        verticalAlignment = Alignment.CenterVertically
+                                    Surface(
+                                        shape = RoundedCornerShape(12.dp),
+                                        color = InspectorFieldBg,
+                                        border = BorderStroke(1.dp, InspectorFieldBorder),
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .height(46.dp)
+                                            .clickable {
+                                                sourceFilePickerLauncher.launch(arrayOf("*/*"))
+                                            }
+                                            .testTag("inspector_main_file_box")
                                     ) {
-                                        Row(
-                                            verticalAlignment = Alignment.CenterVertically,
-                                            horizontalArrangement = Arrangement.spacedBy(6.dp),
-                                            modifier = Modifier.weight(1f)
+                                        Box(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(horizontal = 12.dp),
+                                            contentAlignment = Alignment.CenterStart
                                         ) {
-                                            Icon(
-                                                imageVector = Icons.Default.Security,
-                                                contentDescription = null,
-                                                tint = if (shizukuReady) Color(0xFF10B981) else Color(0xFFA78BFA),
-                                                modifier = Modifier.size(15.dp)
-                                            )
                                             Text(
-                                                text = if (isRestrictedAndroidPath) {
-                                                    "Android 15 Restricted Path (Android/data or obb)"
-                                                } else {
-                                                    "Target Path Testing & Shizuku Engine"
-                                                },
-                                                color = Color.White,
-                                                fontSize = 10.5.sp,
-                                                fontWeight = FontWeight.Bold,
+                                                text = if (selectedFileName.isNotBlank()) selectedFileName else "Select file",
+                                                color = if (selectedFileName.isNotBlank()) Color.White else InspectorPlaceholderColor,
+                                                fontSize = 12.sp,
+                                                fontWeight = if (selectedFileName.isNotBlank()) FontWeight.SemiBold else FontWeight.Medium,
                                                 maxLines = 1,
                                                 overflow = TextOverflow.Ellipsis
                                             )
                                         }
-                                        Text(
-                                            text = shizukuStatusText,
-                                            color = if (shizukuReady) Color(0xFF34D399) else Color(0xFFC4B5FD),
-                                            fontSize = 9.5.sp,
-                                            fontWeight = FontWeight.ExtraBold
-                                        )
                                     }
 
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                    Box(
+                                        modifier = Modifier
+                                            .size(46.dp)
+                                            .clip(RoundedCornerShape(12.dp))
+                                            .background(InspectorPurpleButton)
+                                            .clickable {
+                                                sourceFilePickerLauncher.launch(arrayOf("*/*"))
+                                            }
+                                            .testTag("inspector_select_source_file_button"),
+                                        contentAlignment = Alignment.Center
                                     ) {
-                                        Surface(
-                                            shape = RoundedCornerShape(8.dp),
-                                            color = Color(0xFF0EA5E9).copy(alpha = 0.2f),
-                                            border = BorderStroke(1.dp, Color(0xFF38BDF8)),
-                                            modifier = Modifier
-                                                .weight(1f)
-                                                .height(32.dp)
-                                                .clickable {
-                                                    val updated = buildUpdated()
-                                                    onSaveComponent(updated)
-                                                    onTriggerLive(updated, updated.currentValue.ifBlank { "1" })
-                                                }
-                                                .testTag("inspector_test_target_write_button")
+                                        Icon(
+                                            imageVector = Icons.Default.Folder,
+                                            contentDescription = "Select Main File",
+                                            tint = Color.White,
+                                            modifier = Modifier.size(20.dp)
+                                        )
+                                    }
+                                }
+                            }
+
+                            // 3. Target Path
+                            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                Text(
+                                    text = "Target Path",
+                                    color = Color(0xFFCBD5E1),
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    OutlinedTextField(
+                                        value = targetFile,
+                                        onValueChange = {
+                                            targetFile = it
+                                            onSaveComponent(buildUpdated())
+                                        },
+                                        placeholder = {
+                                            Text(
+                                                "/storage/emulated/0/Android/data/...",
+                                                color = InspectorPlaceholderColor,
+                                                fontSize = 12.sp
+                                            )
+                                        },
+                                        singleLine = true,
+                                        shape = RoundedCornerShape(12.dp),
+                                        colors = OutlinedTextFieldDefaults.colors(
+                                            focusedContainerColor = InspectorFieldBg,
+                                            unfocusedContainerColor = InspectorFieldBg,
+                                            focusedBorderColor = Color(0xFF3B82F6),
+                                            unfocusedBorderColor = InspectorFieldBorder,
+                                            focusedTextColor = Color.White,
+                                            unfocusedTextColor = Color.White
+                                        ),
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .testTag("inspector_target_path_input")
+                                    )
+
+                                    Box(
+                                        modifier = Modifier
+                                            .size(46.dp)
+                                            .clip(RoundedCornerShape(12.dp))
+                                            .background(InspectorPurpleButton)
+                                            .clickable {
+                                                targetDocumentPickerLauncher.launch(arrayOf("*/*"))
+                                            }
+                                            .testTag("inspector_select_target_path_button"),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Folder,
+                                            contentDescription = "Select Target Path",
+                                            tint = Color.White,
+                                            modifier = Modifier.size(20.dp)
+                                        )
+                                    }
+                                }
+
+                                // VOICE & SOUND TRIGGERS RIGHT BELOW TARGET PATH FOR INSTANT ACCESS
+                                renderVoiceAndSoundTriggerSection()
+
+                                // Live Target File & Main File Validation Error / Explanation Box
+                                val cleanTarget = targetFile.trim()
+                                val cleanMain = customSourceFilePath.trim()
+                                val isRestrictedAndroidPath = remember(cleanTarget) {
+                                    ShizukuPrivilegeBridge.isRestrictedAndroidPath(cleanTarget)
+                                }
+                                val shizukuReady = ShizukuPrivilegeBridge.isShizukuReady()
+                                val shizukuStatusText = ShizukuPrivilegeBridge.getStatusSummary(context)
+
+                                val validationErrorMessage: String? = remember(cleanTarget, cleanMain, component.type) {
+                                    val needsMainFile = component.type == "TOGGLE" || component.type == "BUTTON"
+                                    val mainMissing = needsMainFile && (cleanMain.isEmpty() || !File(cleanMain).exists())
+                                    val targetMissing = cleanTarget.isEmpty()
+                                    when {
+                                        mainMissing && targetMissing ->
+                                            "⚠️ Main File & Target Path Dono Missing Hain: Aapne na replacement Main File select ki hai aur na hi Target Path dala hai. Floating window me ye widget ON karne par fail hoga."
+                                        mainMissing ->
+                                            "⚠️ Main File Select Nhi Ki Gayi: Upar 'Select your main file' me wo file select karein jo Target Path wali file se replace hogi."
+                                        targetMissing ->
+                                            "⚠️ Target Path Nhi Dala Hua: Target Path khali hai. Jis path par file change karni hai wo path dalein."
+                                        !cleanTarget.startsWith("/") ->
+                                            "⚠️ Galat Target Path: '$cleanTarget' sahi path nhi hai. Path '/' se shuru hona chahiye (jaise /storage/emulated/0/...)."
+                                        !isRestrictedAndroidPath -> {
+                                            val tf = File(cleanTarget)
+                                            val parent = tf.parentFile
+                                            if (parent == null || !parent.exists()) {
+                                                "⚠️ Target Folder Exist Nhi Karta: '${parent?.absolutePath ?: cleanTarget}' aapke device me mojood nhi hai."
+                                            } else if (!tf.exists()) {
+                                                "⚠️ Target File Exist Nhi Karta: '$cleanTarget' is path par abhi koi file mojood nhi hai."
+                                            } else if (tf.isDirectory) {
+                                                "⚠️ Target Path Ek Folder Hai: '$cleanTarget' folder hai, kisi file ka pura path dalein."
+                                            } else {
+                                                null
+                                            }
+                                        }
+                                        else -> null
+                                    }
+                                }
+
+                                if (validationErrorMessage != null) {
+                                    Surface(
+                                        shape = RoundedCornerShape(10.dp),
+                                        color = Color(0xFF28111B),
+                                        border = BorderStroke(1.dp, Color(0xFFEF4444)),
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .testTag("inspector_target_validation_error_card")
+                                    ) {
+                                        Column(
+                                            modifier = Modifier.padding(10.dp),
+                                            verticalArrangement = Arrangement.spacedBy(3.dp)
                                         ) {
-                                            Box(contentAlignment = Alignment.Center) {
+                                            Text(
+                                                text = "ERROR: AKHIR KYU KAAM NHI KAREGA",
+                                                color = Color(0xFFFCA5A5),
+                                                fontSize = 10.sp,
+                                                fontWeight = FontWeight.ExtraBold
+                                            )
+                                            Text(
+                                                text = validationErrorMessage,
+                                                color = Color(0xFFFEE2E2),
+                                                fontSize = 11.sp,
+                                                fontWeight = FontWeight.Medium
+                                            )
+                                        }
+                                    }
+                                }
+
+                                Surface(
+                                    shape = RoundedCornerShape(10.dp),
+                                    color = if (isRestrictedAndroidPath && !shizukuReady) Color(0xFF1F1235) else Color(0xFF09152B),
+                                    border = BorderStroke(
+                                        1.dp,
+                                        if (isRestrictedAndroidPath && !shizukuReady) Color(0xFF8B5CF6) else Color(0xFF1E3A5F)
+                                    ),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Column(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(10.dp),
+                                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                                    ) {
+                                        Row(
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Row(
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                                modifier = Modifier.weight(1f)
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Default.Security,
+                                                    contentDescription = null,
+                                                    tint = if (shizukuReady) Color(0xFF10B981) else Color(0xFFA78BFA),
+                                                    modifier = Modifier.size(15.dp)
+                                                )
                                                 Text(
-                                                    text = "Test Target File Change",
-                                                    color = Color(0xFFE0F2FE),
-                                                    fontSize = 10.sp,
-                                                    fontWeight = FontWeight.Bold
+                                                    text = if (isRestrictedAndroidPath) {
+                                                        "Android 15 Restricted Path (Shizuku Required)"
+                                                    } else {
+                                                        "Executes Only in Floating Window (ON=Replace, OFF=Restore)"
+                                                    },
+                                                    color = Color.White,
+                                                    fontSize = 10.5.sp,
+                                                    fontWeight = FontWeight.Bold,
+                                                    maxLines = 1,
+                                                    overflow = TextOverflow.Ellipsis
                                                 )
                                             }
+                                            Text(
+                                                text = shizukuStatusText,
+                                                color = if (shizukuReady) Color(0xFF34D399) else Color(0xFFC4B5FD),
+                                                fontSize = 9.5.sp,
+                                                fontWeight = FontWeight.ExtraBold
+                                            )
                                         }
 
                                         Surface(
@@ -753,7 +1340,7 @@ fun ComponentPropertyInspectorSheet(
                                             color = Color(0xFF7C3AED).copy(alpha = 0.28f),
                                             border = BorderStroke(1.dp, Color(0xFFA78BFA)),
                                             modifier = Modifier
-                                                .weight(1f)
+                                                .fillMaxWidth()
                                                 .height(32.dp)
                                                 .clickable {
                                                     ShizukuPrivilegeBridge.probeShizukuBinder(context)
@@ -763,23 +1350,167 @@ fun ComponentPropertyInspectorSheet(
                                                         } else {
                                                             ShizukuPrivilegeBridge.openOrDownloadShizukuApp(context)
                                                         }
-                                                    } else {
-                                                        val updated = buildUpdated()
-                                                        onSaveComponent(updated)
-                                                        onTriggerLive(updated, updated.currentValue.ifBlank { "1" })
                                                     }
                                                 }
                                                 .testTag("inspector_shizuku_fix_button")
                                         ) {
                                             Box(contentAlignment = Alignment.Center) {
                                                 Text(
-                                                    text = if (shizukuReady) "Shizuku Ready ✓" else "Use Shizuku Fix",
+                                                    text = if (shizukuReady) "Shizuku Ready ✓ (Restricted Paths Unlocked)" else "Connect Shizuku for Android 15 Restricted Paths",
                                                     color = Color(0xFFEDE9FE),
                                                     fontSize = 10.sp,
                                                     fontWeight = FontWeight.Bold
                                                 )
                                             }
                                         }
+                                    }
+                                }
+                            }
+                        }
+
+                        // VOICE & SOUND TRIGGERS FOR NON-EXECUTABLE WIDGETS (LINK / TEXT) IN GENERAL TAB
+                        if (!isExecutableFileWidget) {
+                            renderVoiceAndSoundTriggerSection()
+                        }
+
+                        // WIDGET CORNER BORDER LINE CUSTOMIZATION (Color, Transparent, Animation & Size 0 to 100)
+                        Column(
+                            verticalArrangement = Arrangement.spacedBy(6.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(Color(0xFF09152B))
+                                .border(BorderStroke(1.dp, Color(0xFF1E3A5F)), RoundedCornerShape(12.dp))
+                                .padding(10.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = "Widget Corner Border Line (0 to 100)",
+                                    color = Color(0xFF38BDF8),
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.ExtraBold
+                                )
+                                Text(
+                                    text = if (borderStrokePercent == 0 || borderColorHex.equals("#00000000", ignoreCase = true)) {
+                                        "Transparent (0)"
+                                    } else {
+                                        "Size: $borderStrokePercent / 100 • $borderAnimation"
+                                    },
+                                    color = Color(0xFF6EE7B7),
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+
+                            Slider(
+                                value = borderStrokePercent.toFloat(),
+                                onValueChange = { newVal ->
+                                    val nextPct = newVal.roundToInt().coerceIn(0, 100)
+                                    borderStrokePercent = nextPct
+                                    onSaveComponent(buildUpdated(overrideBorderStrokePercent = nextPct))
+                                },
+                                valueRange = 0f..100f,
+                                colors = SliderDefaults.colors(
+                                    thumbColor = Color(0xFF38BDF8),
+                                    activeTrackColor = InspectorPurpleButton,
+                                    inactiveTrackColor = InspectorFieldBorder
+                                ),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(26.dp)
+                                    .testTag("inspector_border_width_slider")
+                            )
+
+                            // Border Color Presets (including Transparent)
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .horizontalScroll(rememberScrollState()),
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                DefaultWidgetBorderColorPresets.forEach { (presetHex, presetName) ->
+                                    val isSelectedBorder = borderColorHex.equals(presetHex, ignoreCase = true)
+                                    val swatchColor = parseHexColorSafe(presetHex, Color.Transparent)
+                                    Surface(
+                                        shape = RoundedCornerShape(8.dp),
+                                        color = if (isSelectedBorder) Color(0xFF1E293B) else InspectorFieldBg,
+                                        border = BorderStroke(
+                                            width = if (isSelectedBorder) 1.5.dp else 1.dp,
+                                            color = if (isSelectedBorder) Color(0xFF38BDF8) else InspectorFieldBorder
+                                        ),
+                                        modifier = Modifier
+                                            .clickable {
+                                                borderColorHex = presetHex
+                                                val nextStroke = if (presetHex == "#00000000") 0 else borderStrokePercent.coerceAtLeast(15)
+                                                borderStrokePercent = nextStroke
+                                                onSaveComponent(
+                                                    buildUpdated(
+                                                        overrideBorderColorHex = presetHex,
+                                                        overrideBorderStrokePercent = nextStroke
+                                                    )
+                                                )
+                                            }
+                                            .testTag("border_color_preset_${presetHex.removePrefix("#").lowercase(Locale.US)}")
+                                    ) {
+                                        Row(
+                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(5.dp)
+                                        ) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .size(12.dp)
+                                                    .clip(CircleShape)
+                                                    .background(swatchColor)
+                                                    .border(BorderStroke(1.dp, Color(0xFF94A3B8)), CircleShape)
+                                            )
+                                            Text(
+                                                text = presetName,
+                                                color = Color.White,
+                                                fontSize = 10.sp,
+                                                fontWeight = if (isSelectedBorder) FontWeight.ExtraBold else FontWeight.Medium
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+
+                            // Border Animation Selector
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .horizontalScroll(rememberScrollState()),
+                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                WidgetBorderAnimationPresets.forEach { (animCode, animLabel) ->
+                                    val isSelectedAnim = borderAnimation.equals(animCode, ignoreCase = true)
+                                    Surface(
+                                        shape = RoundedCornerShape(8.dp),
+                                        color = if (isSelectedAnim) InspectorPurpleButton else InspectorFieldBg,
+                                        border = BorderStroke(
+                                            1.dp,
+                                            if (isSelectedAnim) Color(0xFF60A5FA) else InspectorFieldBorder
+                                        ),
+                                        modifier = Modifier
+                                            .clickable {
+                                                borderAnimation = animCode
+                                                onSaveComponent(buildUpdated(overrideBorderAnimation = animCode))
+                                            }
+                                            .testTag("border_anim_preset_${animCode.lowercase(Locale.US)}")
+                                    ) {
+                                        Text(
+                                            text = "✨ $animLabel",
+                                            color = Color.White,
+                                            fontSize = 10.sp,
+                                            fontWeight = if (isSelectedAnim) FontWeight.ExtraBold else FontWeight.Medium,
+                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp)
+                                        )
                                     }
                                 }
                             }
@@ -980,6 +1711,10 @@ fun ComponentPropertyInspectorSheet(
                                 }
                             }
                         }
+                    }
+
+                    "Voice / Sound" -> {
+                        renderVoiceAndSoundTriggerSection()
                     }
 
                     "Style" -> {
@@ -1437,41 +2172,104 @@ fun ComponentPropertyInspectorSheet(
                     }
 
                     "Advanced" -> {
+                        Surface(
+                            shape = RoundedCornerShape(10.dp),
+                            color = Color(0xFF0C1E38),
+                            border = BorderStroke(1.dp, Color(0xFF38BDF8).copy(alpha = 0.45f)),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text(
+                                text = "🛡️ Safe Studio Preview Mode: Widgets never execute or replace target files inside the Studio preview. File replacement and link opening happen strictly after launching the Floating Window (FLOAT).",
+                                color = Color(0xFFBAE6FD),
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp)
+                            )
+                        }
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Column(
+                                modifier = Modifier.weight(1f),
+                                verticalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                Text("Position X (dp)", color = Color(0xFFCBD5E1), fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                OutlinedTextField(
+                                    value = posX,
+                                    onValueChange = {
+                                        posX = it
+                                        onSaveComponent(buildUpdated())
+                                    },
+                                    singleLine = true,
+                                    shape = RoundedCornerShape(12.dp),
+                                    colors = OutlinedTextFieldDefaults.colors(
+                                        focusedContainerColor = InspectorFieldBg,
+                                        unfocusedContainerColor = InspectorFieldBg,
+                                        focusedBorderColor = Color(0xFF3B82F6),
+                                        unfocusedBorderColor = InspectorFieldBorder,
+                                        focusedTextColor = Color.White,
+                                        unfocusedTextColor = Color.White
+                                    ),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .testTag("inspector_pos_x_input")
+                                )
+                            }
+                            Column(
+                                modifier = Modifier.weight(1f),
+                                verticalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                Text("Position Y (dp)", color = Color(0xFFCBD5E1), fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                                OutlinedTextField(
+                                    value = posY,
+                                    onValueChange = {
+                                        posY = it
+                                        onSaveComponent(buildUpdated())
+                                    },
+                                    singleLine = true,
+                                    shape = RoundedCornerShape(12.dp),
+                                    colors = OutlinedTextFieldDefaults.colors(
+                                        focusedContainerColor = InspectorFieldBg,
+                                        unfocusedContainerColor = InspectorFieldBg,
+                                        focusedBorderColor = Color(0xFF3B82F6),
+                                        unfocusedBorderColor = InspectorFieldBorder,
+                                        focusedTextColor = Color.White,
+                                        unfocusedTextColor = Color.White
+                                    ),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .testTag("inspector_pos_y_input")
+                                )
+                            }
+                        }
+
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
                             OutlinedButton(
-                                onClick = {
-                                    val updated = buildUpdated()
-                                    onTriggerLive(updated, updated.currentValue)
-                                },
+                                onClick = { onDuplicateComponent(buildUpdated()) },
                                 border = BorderStroke(1.dp, InspectorFieldBorder),
                                 modifier = Modifier
                                     .weight(1f)
-                                    .testTag("inspector_test_live_button")
-                            ) {
-                                Icon(Icons.Default.PlayArrow, contentDescription = null, tint = Color.White, modifier = Modifier.size(15.dp))
-                                Spacer(Modifier.width(4.dp))
-                                Text("Test Write", color = Color.White, fontSize = 11.sp)
-                            }
-                            OutlinedButton(
-                                onClick = { onDuplicateComponent(buildUpdated()) },
-                                border = BorderStroke(1.dp, InspectorFieldBorder),
-                                modifier = Modifier.weight(1f)
+                                    .testTag("inspector_duplicate_button")
                             ) {
                                 Icon(Icons.Default.ContentCopy, contentDescription = null, tint = Color.White, modifier = Modifier.size(15.dp))
                                 Spacer(Modifier.width(4.dp))
-                                Text("Duplicate", color = Color.White, fontSize = 11.sp)
+                                Text("Duplicate Widget", color = Color.White, fontSize = 11.sp)
                             }
                             OutlinedButton(
                                 onClick = { onDeleteComponent(component) },
                                 border = BorderStroke(1.dp, Color(0xFFEF4444)),
-                                modifier = Modifier.weight(1f)
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .testTag("inspector_delete_button")
                             ) {
                                 Icon(Icons.Default.Delete, contentDescription = null, tint = Color(0xFFF87171), modifier = Modifier.size(15.dp))
                                 Spacer(Modifier.width(4.dp))
-                                Text("Delete", color = Color(0xFFF87171), fontSize = 11.sp)
+                                Text("Delete Widget", color = Color(0xFFF87171), fontSize = 11.sp)
                             }
                         }
                     }

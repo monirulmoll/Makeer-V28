@@ -72,7 +72,10 @@ data class CanvasComponentEntity(
     val offPayloadHex: String = "Off",
     val sliderMax: Int = 100,
     val currentValue: String = "false",
-    val linkUrl: String = ""
+    val linkUrl: String = "",
+    val borderColorHex: String = "#38BDF8",
+    val borderStrokePercent: Int = 25,
+    val borderAnimation: String = "NONE"
 )
 
 @Entity(tableName = "config_write_audit")
@@ -92,6 +95,9 @@ data class ConfigWriteAuditEntity(
 interface StudioDao {
     @Query("SELECT * FROM studio_projects ORDER BY updatedAt DESC")
     fun observeAllProjects(): Flow<List<StudioProjectEntity>>
+
+    @Query("SELECT * FROM studio_projects ORDER BY updatedAt DESC")
+    suspend fun getAllProjectsSync(): List<StudioProjectEntity>
 
     @Query("SELECT * FROM studio_projects WHERE id = :projectId LIMIT 1")
     suspend fun getProjectById(projectId: Long): StudioProjectEntity?
@@ -145,7 +151,7 @@ interface ConfigAuditDao {
         CanvasComponentEntity::class,
         ConfigWriteAuditEntity::class
     ],
-    version = 3,
+    version = 4,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -165,6 +171,23 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        private val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                try {
+                    db.execSQL("ALTER TABLE canvas_components ADD COLUMN borderColorHex TEXT NOT NULL DEFAULT '#38BDF8'")
+                } catch (_: Throwable) {
+                }
+                try {
+                    db.execSQL("ALTER TABLE canvas_components ADD COLUMN borderStrokePercent INTEGER NOT NULL DEFAULT 25")
+                } catch (_: Throwable) {
+                }
+                try {
+                    db.execSQL("ALTER TABLE canvas_components ADD COLUMN borderAnimation TEXT NOT NULL DEFAULT 'NONE'")
+                } catch (_: Throwable) {
+                }
+            }
+        }
+
         fun getInstance(context: Context): AppDatabase {
             return INSTANCE ?: synchronized(this) {
                 val instance = Room.databaseBuilder(
@@ -172,7 +195,7 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "studio_error_workspace.db"
                 )
-                    .addMigrations(MIGRATION_2_3)
+                    .addMigrations(MIGRATION_2_3, MIGRATION_3_4)
                     .fallbackToDestructiveMigration(true)
                     .build()
                 INSTANCE = instance

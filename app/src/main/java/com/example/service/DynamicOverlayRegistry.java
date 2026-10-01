@@ -79,6 +79,9 @@ public class DynamicOverlayRegistry {
                     existing.sliderMax = incoming.sliderMax;
                     existing.currentValue = incoming.currentValue;
                     existing.linkUrl = incoming.linkUrl;
+                    existing.borderColorHex = incoming.borderColorHex;
+                    existing.borderStrokePercent = incoming.borderStrokePercent;
+                    existing.borderAnimation = incoming.borderAnimation;
                 }
             }
         }
@@ -218,6 +221,9 @@ public class DynamicOverlayRegistry {
                     spec.sliderMax = c.optInt("sliderMax", 100);
                     spec.currentValue = c.optString("currentValue", "0");
                     spec.linkUrl = c.optString("linkUrl", "");
+                    spec.borderColorHex = c.optString("borderColorHex", "#38BDF8");
+                    spec.borderStrokePercent = c.optInt("borderStrokePercent", 25);
+                    spec.borderAnimation = c.optString("borderAnimation", "NONE");
                     parsed.add(spec);
                 }
             }
@@ -275,5 +281,8 @@ public class DynamicOverlayRegistry {
         public int sliderMax;
         public String currentValue;
         public String linkUrl;
+        public String borderColorHex = "#38BDF8";
+        public int borderStrokePercent = 25;
+        public String borderAnimation = "NONE";
     }
 }

@@ -1,6 +1,13 @@
 package com.example.ui
 
 import android.graphics.BitmapFactory
+import androidx.compose.animation.animateColor
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -216,6 +223,11 @@ fun SketchwareStudioSplitWorkspace(
                     onMoveComponent(comp, newX, newY)
                 }
             },
+            onResizeComponent = { id, newW, newH ->
+                components.find { it.id == id }?.let { comp ->
+                    onResizeComponent(comp, newW, newH)
+                }
+            },
             onResizeCanvas = onResizeCanvas,
             onOpenEditFloatingPanel = onOpenEditFloatingPanel,
             onOpenChangeBackground = onOpenChangeBackground,
@@ -235,113 +247,43 @@ private fun LeftSideWidgetPalette(
     onSelectPaletteEntry: (SketchwarePaletteEntry) -> Unit,
     onToggleAutoFixSize: () -> Unit
 ) {
-    val layoutItems = remember {
-        listOf(
-            LeftPaletteItemSpec(
-                entry = SketchwarePaletteEntry("Linear (H)", ComponentWidgetType.BUTTON, 196, 38, "#1E293B", "#F8FAFC"),
-                icon = Icons.Default.HorizontalDistribute,
-                iconTint = Color(0xFF38BDF8),
-                tagSlug = "linear_h"
-            ),
-            LeftPaletteItemSpec(
-                entry = SketchwarePaletteEntry("Linear (V)", ComponentWidgetType.BUTTON, 196, 56, "#1E293B", "#F8FAFC"),
-                icon = Icons.Default.VerticalDistribute,
-                iconTint = Color(0xFF38BDF8),
-                tagSlug = "linear_v"
-            ),
-            LeftPaletteItemSpec(
-                entry = SketchwarePaletteEntry("Scroll (H)", ComponentWidgetType.BUTTON, 196, 42, "#1E293B", "#F8FAFC"),
-                icon = Icons.Default.SwapHoriz,
-                iconTint = Color(0xFF38BDF8),
-                tagSlug = "scroll_h"
-            ),
-            LeftPaletteItemSpec(
-                entry = SketchwarePaletteEntry("Scroll (V)", ComponentWidgetType.BUTTON, 196, 64, "#1E293B", "#F8FAFC"),
-                icon = Icons.Default.SwapVert,
-                iconTint = Color(0xFF38BDF8),
-                tagSlug = "scroll_v"
-            )
-        )
-    }
-
-    val androidxItems = remember {
-        listOf(
-            LeftPaletteItemSpec(
-                entry = SketchwarePaletteEntry("CardView", ComponentWidgetType.BUTTON, 196, 48, "#FFFFFF", "#0F172A"),
-                icon = Icons.Default.CreditCard,
-                iconTint = Color(0xFF818CF8),
-                tagSlug = "cardview"
-            ),
-            LeftPaletteItemSpec(
-                entry = SketchwarePaletteEntry("TextInputLayout", ComponentWidgetType.INPUT, 196, 44, "#FFFFFF", "#0F172A"),
-                icon = Icons.Default.Input,
-                iconTint = Color(0xFF818CF8),
-                tagSlug = "textinputlayout"
-            ),
-            LeftPaletteItemSpec(
-                entry = SketchwarePaletteEntry("SwipeRefresh", ComponentWidgetType.TOGGLE, 196, 42, "#FFFFFF", "#0F172A"),
-                icon = Icons.Default.Refresh,
-                iconTint = Color(0xFF818CF8),
-                tagSlug = "swiperefresh"
-            )
-        )
-    }
-
     val widgetItems = remember {
         listOf(
             LeftPaletteItemSpec(
-                entry = SketchwarePaletteEntry("TextView", ComponentWidgetType.TEXT),
-                icon = Icons.Default.TextFields,
-                iconTint = Color(0xFFFB923C),
-                tagSlug = "text"
+                entry = SketchwarePaletteEntry("Switch", ComponentWidgetType.TOGGLE, 196, 42),
+                icon = Icons.Default.ToggleOn,
+                iconTint = Color(0xFF10B981),
+                tagSlug = "toggle"
             ),
             LeftPaletteItemSpec(
-                entry = SketchwarePaletteEntry("EditText", ComponentWidgetType.INPUT),
-                icon = Icons.Default.Edit,
-                iconTint = Color(0xFFFB923C),
-                tagSlug = "input"
-            ),
-            LeftPaletteItemSpec(
-                entry = SketchwarePaletteEntry("Button", ComponentWidgetType.BUTTON),
+                entry = SketchwarePaletteEntry("Button", ComponentWidgetType.BUTTON, 196, 42),
                 icon = Icons.Default.SmartButton,
                 iconTint = Color(0xFFFB923C),
                 tagSlug = "button"
             ),
             LeftPaletteItemSpec(
-                entry = SketchwarePaletteEntry("ImageView", ComponentWidgetType.IMAGE),
-                icon = Icons.Default.Image,
-                iconTint = Color(0xFFFB923C),
-                tagSlug = "image"
-            ),
-            LeftPaletteItemSpec(
-                entry = SketchwarePaletteEntry("CheckBox", ComponentWidgetType.TOGGLE),
-                icon = Icons.Default.CheckBox,
-                iconTint = Color(0xFFFB923C),
-                tagSlug = "checkbox"
-            ),
-            LeftPaletteItemSpec(
-                entry = SketchwarePaletteEntry("Switch", ComponentWidgetType.TOGGLE),
-                icon = Icons.Default.ToggleOn,
-                iconTint = Color(0xFFFB923C),
-                tagSlug = "toggle"
-            ),
-            LeftPaletteItemSpec(
-                entry = SketchwarePaletteEntry("SeekBar", ComponentWidgetType.SLIDER),
-                icon = Icons.Default.Tune,
-                iconTint = Color(0xFFFB923C),
-                tagSlug = "slider"
-            ),
-            LeftPaletteItemSpec(
-                entry = SketchwarePaletteEntry("ProgressBar", ComponentWidgetType.SLIDER),
-                icon = Icons.Default.LinearScale,
-                iconTint = Color(0xFFFB923C),
-                tagSlug = "progressbar"
-            ),
-            LeftPaletteItemSpec(
-                entry = SketchwarePaletteEntry("Link Opener", ComponentWidgetType.LINK),
+                entry = SketchwarePaletteEntry("Link Opener", ComponentWidgetType.LINK, 196, 42),
                 icon = Icons.Default.Link,
                 iconTint = Color(0xFF38BDF8),
                 tagSlug = "link"
+            ),
+            LeftPaletteItemSpec(
+                entry = SketchwarePaletteEntry("Slider 0 to 100", ComponentWidgetType.SLIDER, 196, 52),
+                icon = Icons.Default.Tune,
+                iconTint = Color(0xFFA78BFA),
+                tagSlug = "slider"
+            ),
+            LeftPaletteItemSpec(
+                entry = SketchwarePaletteEntry("EditText", ComponentWidgetType.INPUT, 196, 46),
+                icon = Icons.Default.Edit,
+                iconTint = Color(0xFFFBBF24),
+                tagSlug = "input"
+            ),
+            LeftPaletteItemSpec(
+                entry = SketchwarePaletteEntry("TextView", ComponentWidgetType.TEXT, 196, 36),
+                icon = Icons.Default.TextFields,
+                iconTint = Color(0xFFF472B6),
+                tagSlug = "text"
             )
         )
     }
@@ -355,42 +297,16 @@ private fun LeftSideWidgetPalette(
             .testTag("left_widget_palette_sidebar")
     ) {
         Column(modifier = Modifier.fillMaxSize()) {
-            // Scrollable Categorized Widget List on Left Side
+            // Scrollable Categorized Widget List on Left Side (Only the 6 core widgets)
             Column(
                 modifier = Modifier
                     .weight(1f)
                     .fillMaxWidth()
                     .verticalScroll(rememberScrollState())
                     .padding(horizontal = 6.dp, vertical = 6.dp),
-                verticalArrangement = Arrangement.spacedBy(3.dp)
+                verticalArrangement = Arrangement.spacedBy(5.dp)
             ) {
-                PaletteCategoryHeader("Layouts", Color(0xFF38BDF8))
-                layoutItems.forEach { item ->
-                    LeftPaletteItemRow(
-                        item = item,
-                        onClick = { onSelectPaletteEntry(item.entry) }
-                    )
-                }
-
-                HorizontalDivider(
-                    color = Color(0xFF1E293B),
-                    modifier = Modifier.padding(vertical = 4.dp)
-                )
-
-                PaletteCategoryHeader("AndroidX", Color(0xFFA78BFA))
-                androidxItems.forEach { item ->
-                    LeftPaletteItemRow(
-                        item = item,
-                        onClick = { onSelectPaletteEntry(item.entry) }
-                    )
-                }
-
-                HorizontalDivider(
-                    color = Color(0xFF1E293B),
-                    modifier = Modifier.padding(vertical = 4.dp)
-                )
-
-                PaletteCategoryHeader("Widgets", Color(0xFFFB923C))
+                PaletteCategoryHeader("Widgets (6)", Color(0xFFFB923C))
                 widgetItems.forEach { item ->
                     LeftPaletteItemRow(
                         item = item,
@@ -525,6 +441,16 @@ fun parseHexColorSafe(hex: String, fallback: Color = Color(0xFF2563EB)): Color {
 fun WidgetPaletteStrip(
     onAddWidget: (ComponentWidgetType) -> Unit
 ) {
+    val allowedWidgets = remember {
+        listOf(
+            ComponentWidgetType.TOGGLE,
+            ComponentWidgetType.BUTTON,
+            ComponentWidgetType.LINK,
+            ComponentWidgetType.SLIDER,
+            ComponentWidgetType.INPUT,
+            ComponentWidgetType.TEXT
+        )
+    }
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -534,7 +460,7 @@ fun WidgetPaletteStrip(
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        ComponentWidgetType.entries.forEach { widgetType ->
+        allowedWidgets.forEach { widgetType ->
             Button(
                 onClick = { onAddWidget(widgetType) },
                 colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1E293B)),
@@ -558,6 +484,7 @@ fun InteractiveOverlayCanvas(
     selectedComponentId: Long?,
     onSelectComponent: (Long?) -> Unit,
     onMoveComponent: (Long, Int, Int) -> Unit,
+    onResizeComponent: (Long, Int, Int) -> Unit = { _, _, _ -> },
     onResizeCanvas: (Int, Int) -> Unit = { _, _ -> },
     onOpenEditFloatingPanel: () -> Unit = {},
     onOpenChangeBackground: () -> Unit = {},
@@ -1016,13 +943,58 @@ fun InteractiveOverlayCanvas(
                                             }
                                         }
 
+                                        val infiniteTransition = rememberInfiniteTransition(label = "widgetBorderAnim")
+                                        val pulseAlpha by infiniteTransition.animateFloat(
+                                            initialValue = 0.28f,
+                                            targetValue = 1.0f,
+                                            animationSpec = infiniteRepeatable(
+                                                animation = tween(durationMillis = 750, easing = LinearEasing),
+                                                repeatMode = RepeatMode.Reverse
+                                            ),
+                                            label = "pulseAlpha"
+                                        )
+                                        val rainbowColor by infiniteTransition.animateColor(
+                                            initialValue = Color(0xFF38BDF8),
+                                            targetValue = Color(0xFFEC4899),
+                                            animationSpec = infiniteRepeatable(
+                                                animation = tween(durationMillis = 1100, easing = LinearEasing),
+                                                repeatMode = RepeatMode.Reverse
+                                            ),
+                                            label = "rainbowColor"
+                                        )
+                                        val glowExtraDp by infiniteTransition.animateFloat(
+                                            initialValue = 0f,
+                                            targetValue = 2.5f,
+                                            animationSpec = infiniteRepeatable(
+                                                animation = tween(durationMillis = 650, easing = LinearEasing),
+                                                repeatMode = RepeatMode.Reverse
+                                            ),
+                                            label = "glowExtraDp"
+                                        )
+
                                         components.forEach { comp ->
                                             val isSelected = comp.id == selectedComponentId
-                                            var offsetX by remember(comp.id, comp.posXDp) {
-                                                mutableFloatStateOf(with(density) { comp.posXDp.dp.toPx() })
+                                            var offsetX by remember(comp.id, comp.posXDp, project.autoFixSize) {
+                                                mutableFloatStateOf(
+                                                    with(density) {
+                                                        (if (project.autoFixSize) 14.dp else comp.posXDp.dp).toPx()
+                                                    }
+                                                )
                                             }
                                             var offsetY by remember(comp.id, comp.posYDp) {
                                                 mutableFloatStateOf(with(density) { comp.posYDp.dp.toPx() })
+                                            }
+
+                                            val effectiveInitWidthDp = if (project.autoFixSize) {
+                                                (dragCanvasWidthDp.roundToInt() - 28).coerceAtLeast(100)
+                                            } else {
+                                                comp.widthDp.coerceIn(60, 320)
+                                            }
+                                            var liveWidthDp by remember(comp.id, comp.widthDp, project.autoFixSize, dragCanvasWidthDp) {
+                                                mutableFloatStateOf(effectiveInitWidthDp.toFloat())
+                                            }
+                                            var liveHeightDp by remember(comp.id, comp.heightDp) {
+                                                mutableFloatStateOf(comp.heightDp.coerceIn(28, 220).toFloat())
                                             }
 
                                             val isToggle = comp.type == "TOGGLE"
@@ -1034,11 +1006,25 @@ fun InteractiveOverlayCanvas(
                                                 parseHexColorSafe(comp.bgColorHex, Color(0xFF2563EB))
                                             }
                                             val widgetText = parseHexColorSafe(comp.textColorHex, Color(0xFF0F172A))
-                                            val borderColor = when {
-                                                isSelected -> Color(0xFF4F46E5)
-                                                isToggle && isChecked -> Color(0xFF10B981)
-                                                isToggle -> Color(0xFF64748B)
-                                                else -> Color(0xFFCBD5E1)
+
+                                            val strokePct = comp.borderStrokePercent.coerceIn(0, 100)
+                                            val isTransparentCustomBorder = strokePct == 0 ||
+                                                comp.borderColorHex.equals("#00000000", ignoreCase = true)
+                                            val baseCustomBorderColor = parseHexColorSafe(comp.borderColorHex, Color(0xFF38BDF8))
+                                            val animMode = comp.borderAnimation.uppercase()
+                                            val resolvedBorderColor = when {
+                                                isTransparentCustomBorder -> if (isSelected) Color(0xFF38BDF8).copy(alpha = 0.65f) else Color.Transparent
+                                                animMode == "RAINBOW" -> rainbowColor
+                                                animMode == "PULSE" -> baseCustomBorderColor.copy(alpha = pulseAlpha)
+                                                animMode == "GLOW" -> baseCustomBorderColor.copy(alpha = (pulseAlpha + 0.2f).coerceAtMost(1f))
+                                                else -> baseCustomBorderColor
+                                            }
+                                            val baseStrokeDp = if (isTransparentCustomBorder) {
+                                                if (isSelected) 1.dp else 0.dp
+                                            } else {
+                                                val rawDp = (strokePct / 10f).coerceIn(0.5f, 10f)
+                                                val animBoost = if (animMode == "GLOW") glowExtraDp else 0f
+                                                (rawDp + animBoost).dp
                                             }
 
                                             val widgetBgBitmap = remember(comp.bgImagePath) {
@@ -1053,20 +1039,21 @@ fun InteractiveOverlayCanvas(
                                                 color = widgetBg,
                                                 modifier = Modifier
                                                     .offset { IntOffset(offsetX.roundToInt(), offsetY.roundToInt()) }
-                                                    .size(comp.widthDp.dp, comp.heightDp.dp)
-                                                    .border(
-                                                        width = if (isSelected || isToggle) 2.dp else 1.dp,
-                                                        color = borderColor,
-                                                        shape = RoundedCornerShape(8.dp)
+                                                    .size(liveWidthDp.dp, liveHeightDp.dp)
+                                                    .then(
+                                                        if (baseStrokeDp > 0.dp) {
+                                                            Modifier.border(
+                                                                width = baseStrokeDp,
+                                                                color = resolvedBorderColor,
+                                                                shape = RoundedCornerShape(8.dp)
+                                                            )
+                                                        } else {
+                                                            Modifier
+                                                        }
                                                     )
                                                     .clickable {
+                                                        // Preview screen NEVER executes target files or opens links! Only selects widget for editing.
                                                         onSelectComponent(comp.id)
-                                                        val nextVal = if (isToggle) {
-                                                            if (isChecked) "0" else "1"
-                                                        } else {
-                                                            comp.currentValue
-                                                        }
-                                                        onTriggerComponent(comp, nextVal)
                                                     }
                                                     .pointerInput(comp.id, project.autoFixSize) {
                                                         if (!project.autoFixSize) {
@@ -1107,7 +1094,7 @@ fun InteractiveOverlayCanvas(
                                                     ) {
                                                         Column(modifier = Modifier.weight(1f)) {
                                                             Text(
-                                                                text = comp.label,
+                                                                text = if (comp.type == "LINK") "🔗 ${comp.label}" else comp.label,
                                                                 color = widgetText,
                                                                 fontSize = 11.sp,
                                                                 fontWeight = FontWeight.Bold,
@@ -1119,29 +1106,80 @@ fun InteractiveOverlayCanvas(
                                                                     .coerceIn(0f, comp.sliderMax.toFloat().coerceAtLeast(1f))
                                                                 Slider(
                                                                     value = sliderVal,
-                                                                    onValueChange = { v ->
-                                                                        onTriggerComponent(comp, v.roundToInt().toString())
+                                                                    onValueChange = {
+                                                                        // Only select in studio preview; do not execute target file
+                                                                        onSelectComponent(comp.id)
                                                                     },
                                                                     valueRange = 0f..comp.sliderMax.toFloat().coerceAtLeast(1f),
                                                                     modifier = Modifier.height(22.dp)
                                                                 )
-                                                            } else if (comp.type == "INPUT" || comp.type == "TEXT") {
+                                                            } else if (comp.type == "INPUT") {
                                                                 Text(
-                                                                    text = comp.currentValue,
+                                                                    text = comp.currentValue.ifBlank { "Enter value..." },
                                                                     color = widgetText.copy(alpha = 0.85f),
                                                                     fontSize = 10.sp,
                                                                     fontFamily = FontFamily.Monospace,
                                                                     maxLines = 1
+                                                                )
+                                                            } else if (comp.type == "LINK" && comp.linkUrl.isNotBlank()) {
+                                                                Text(
+                                                                    text = comp.linkUrl,
+                                                                    color = widgetText.copy(alpha = 0.8f),
+                                                                    fontSize = 9.sp,
+                                                                    maxLines = 1,
+                                                                    overflow = TextOverflow.Ellipsis
                                                                 )
                                                             }
                                                         }
                                                         if (isToggle) {
                                                             Switch(
                                                                 checked = isChecked,
-                                                                onCheckedChange = { checked ->
+                                                                onCheckedChange = {
+                                                                    // Preview screen never executes target file changes; only selects widget
                                                                     onSelectComponent(comp.id)
-                                                                    onTriggerComponent(comp, if (checked) "1" else "0")
                                                                 }
+                                                            )
+                                                        }
+                                                    }
+
+                                                    // Manual Widget Corner Resize Handle when Auto Size is OFF (computer tab style)
+                                                    if (!project.autoFixSize) {
+                                                        Box(
+                                                            modifier = Modifier
+                                                                .align(Alignment.BottomEnd)
+                                                                .size(18.dp)
+                                                                .clip(RoundedCornerShape(topStart = 6.dp, bottomEnd = 8.dp))
+                                                                .background(
+                                                                    if (isSelected) Color(0xFF38BDF8).copy(alpha = 0.85f)
+                                                                    else Color(0xFF0F172A).copy(alpha = 0.55f)
+                                                                )
+                                                                .pointerInput(comp.id, project.autoFixSize) {
+                                                                    detectDragGestures(
+                                                                        onDragStart = { onSelectComponent(comp.id) },
+                                                                        onDragEnd = {
+                                                                            onResizeComponent(
+                                                                                comp.id,
+                                                                                liveWidthDp.roundToInt().coerceIn(60, 320),
+                                                                                liveHeightDp.roundToInt().coerceIn(28, 220)
+                                                                            )
+                                                                        },
+                                                                        onDrag = { change, dragAmount ->
+                                                                            change.consume()
+                                                                            val dxDp = with(density) { dragAmount.x.toDp().value }
+                                                                            val dyDp = with(density) { dragAmount.y.toDp().value }
+                                                                            liveWidthDp = (liveWidthDp + dxDp).coerceIn(60f, 320f)
+                                                                            liveHeightDp = (liveHeightDp + dyDp).coerceIn(28f, 220f)
+                                                                        }
+                                                                    )
+                                                                }
+                                                                .testTag("widget_resize_handle_${comp.id}"),
+                                                            contentAlignment = Alignment.Center
+                                                        ) {
+                                                            Text(
+                                                                text = "↘",
+                                                                color = Color.White,
+                                                                fontSize = 9.sp,
+                                                                fontWeight = FontWeight.ExtraBold
                                                             )
                                                         }
                                                     }
@@ -1151,17 +1189,17 @@ fun InteractiveOverlayCanvas(
                                     }
                                 }
 
-                                // Corner Resize Handle for Floating Panel Window
+                                // Corner Resize Handle for Floating Panel Window (Works both when Auto Size is ON and OFF)
                                 Box(
                                     modifier = Modifier
                                         .align(Alignment.BottomEnd)
-                                        .size(22.dp)
+                                        .size(24.dp)
                                         .clip(RoundedCornerShape(topStart = 8.dp, bottomEnd = 16.dp))
                                         .background(
-                                            if (isDarkBg) Color.White.copy(alpha = 0.16f)
-                                            else Color.Black.copy(alpha = 0.12f)
+                                            if (isDarkBg) Color(0xFF38BDF8).copy(alpha = 0.35f)
+                                            else Color(0xFF2563EB).copy(alpha = 0.25f)
                                         )
-                                        .pointerInput(project.id) {
+                                        .pointerInput(project.id, project.autoFixSize) {
                                             detectDragGestures(
                                                 onDragEnd = {
                                                     onResizeCanvas(
@@ -1184,7 +1222,7 @@ fun InteractiveOverlayCanvas(
                                     Text(
                                         text = "↘",
                                         color = headerTextColor,
-                                        fontSize = 11.sp,
+                                        fontSize = 12.sp,
                                         fontWeight = FontWeight.ExtraBold
                                     )
                                 }

@@ -622,6 +622,150 @@ public class LocalConfigStateWriter {
         return this.applyWidgetPatchSync(fallbackDir, widgetKey, widgetType, targetFilePath, byteOffsetHex, originalValue, changeValue, liveValue, isActive, componentLabel, null);
     }
 
+    /**
+     * Validates a widget triggered inside the Floating Window before modifying the target file:
+     * 1. Checks if Target Path is blank -> emits MISSING_TARGET_PATH diagnostic report.
+     * 2. Checks if Source File is not selected (when no custom source file is bound for executable widgets) -> emits MISSING_SOURCE_FILE diagnostic report.
+     * 3. Checks if Target Path is restricted (Android 13/14/15 /Android/data or /Android/obb) or does not exist -> emits ANDROID_15_RESTRICTED_PATH or TARGET_PATH_NOT_FOUND diagnostic report.
+     * 4. Executes the file replacement on ON and restores the original file on OFF.
+     */
+    public boolean executeFloatingWidgetPatchSync(
+            final File fallbackDir,
+            final String widgetKey,
+            final String widgetType,
+            final String targetFilePath,
+            final String byteOffsetHex,
+            final String originalValue,
+            final String changeValue,
+            final String liveValue,
+            final boolean isActive,
+            final String componentLabel,
+            final String customSourceFilePath
+    ) {
+        final Context ctx = this.appContext;
+        final String safeKey = widgetKey != null && !widgetKey.trim().isEmpty() ? widgetKey.trim() : (componentLabel != null ? componentLabel : "widget");
+        final String resolvedLabel = componentLabel != null && !componentLabel.trim().isEmpty() ? componentLabel : safeKey;
+        final String type = widgetType != null ? widgetType.toUpperCase(Locale.US) : "BUTTON";
+        final String orig = originalValue != null ? originalValue : "";
+        final String chg = changeValue != null ? changeValue : "";
+        final String live = liveValue != null ? liveValue : "";
+        final String rawTarget = targetFilePath != null ? targetFilePath.trim() : "";
+        final String rawSource = customSourceFilePath != null ? customSourceFilePath.trim() : "";
+
+        Runnable retryAction = () -> this.fileIoExecutor.execute(() -> this.executeFloatingWidgetPatchSync(
+                fallbackDir, safeKey, type, targetFilePath, byteOffsetHex, orig, chg, live, isActive, resolvedLabel, customSourceFilePath
+        ));
+
+        // 1. Validate Target Path is entered
+        if (rawTarget.isEmpty() || rawTarget.endsWith("/StudioTarget/live_state.bin")) {
+            File defaultCheck = rawTarget.isEmpty() ? null : new File(rawTarget);
+            if (rawTarget.isEmpty() || (defaultCheck != null && !defaultCheck.exists() && rawSource.isEmpty())) {
+                WriteDiagnosticReport report = this.buildFailureDiagnosticReport(
+                        ctx,
+                        resolvedLabel,
+                        rawTarget.isEmpty() ? "(No Target Path Set)" : rawTarget,
+                        "MISSING_TARGET_PATH: Target file path khali hai ya set nhi kiya gaya hai. Kripya widget me sahi Target Path dalein.",
+                        retryAction
+                );
+                this.notifyDiagnosticWriteError(report);
+                return false;
+            }
+        }
+
+        // 2. Validate Source / Main File is selected for file-replacement widgets (TOGGLE / BUTTON)
+        boolean hasValidSourceFile = false;
+        if (!rawSource.isEmpty()) {
+            File srcFile = new File(rawSource);
+            if (srcFile.exists() && srcFile.isFile()) {
+                hasValidSourceFile = true;
+            }
+        }
+        boolean hasCustomPayloadTokens = (!orig.isEmpty() && !"Off".equalsIgnoreCase(orig) && !"0x00".equalsIgnoreCase(orig))
+                || (!chg.isEmpty() && !"On".equalsIgnoreCase(chg) && !"0x01".equalsIgnoreCase(chg));
+
+        if (!hasValidSourceFile && !hasCustomPayloadTokens && ("TOGGLE".equals(type) || "BUTTON".equals(type))) {
+            WriteDiagnosticReport report = this.buildFailureDiagnosticReport(
+                    ctx,
+                    resolvedLabel,
+                    rawTarget,
+                    "MISSING_SOURCE_FILE: Is widget me koi Main / Source file select nhi kiya gaya hai. 'Select File' se file select karein jisse Target Path replace ho sake.",
+                    retryAction
+            );
+            this.notifyDiagnosticWriteError(report);
+            return false;
+        }
+
+        // 3. Validate Target Path exists (or if restricted Android 13/14/15 path, check Shizuku first)
+        File target = this.resolveTargetFile(fallbackDir, rawTarget);
+        String absPath = target.getAbsolutePath();
+        boolean isRestricted = ShizukuPrivilegeBridge.isRestrictedAndroidPath(absPath);
+
+        if (isRestricted) {
+            if (ctx != null) {
+                ShizukuPrivilegeBridge.probeShizukuBinder(ctx);
+            }
+            if (!ShizukuPrivilegeBridge.isShizukuReady(ctx)) {
+                File parent = target.getParentFile();
+                if (parent == null || !parent.canWrite()) {
+                    WriteDiagnosticReport report = this.buildFailureDiagnosticReport(
+                            ctx,
+                            resolvedLabel,
+                            absPath,
+                            "open failed: EACCES (Permission denied) - Android " + Build.VERSION.SDK_INT + " Restricted Path requires Shizuku",
+                            retryAction
+                    );
+                    this.notifyDiagnosticWriteError(report);
+                    return false;
+                }
+            } else {
+                // Shizuku is ready: verify the target file or its parent directory actually exists
+                File backupDir = new File(fallbackDir, "original_target_backups");
+                String targetHashKey = Integer.toHexString(absPath.hashCode()) + "_" + target.getName().replaceAll("[^a-zA-Z0-9._-]", "_");
+                File markerFile = new File(backupDir, targetHashKey + ".replaced_marker");
+                if (!markerFile.exists() && !ShizukuPrivilegeBridge.remoteFileExistsViaShizuku(absPath)) {
+                    WriteDiagnosticReport report = this.buildFailureDiagnosticReport(
+                            ctx,
+                            resolvedLabel,
+                            absPath,
+                            "TARGET_PATH_NOT_FOUND: Target file '" + absPath + "' aapke device me exist nhi karta (Shizuku verified file not found).",
+                            retryAction
+                    );
+                    this.notifyDiagnosticWriteError(report);
+                    return false;
+                }
+            }
+        } else {
+            File backupDir = new File(fallbackDir, "original_target_backups");
+            String targetHashKey = Integer.toHexString(absPath.hashCode()) + "_" + target.getName().replaceAll("[^a-zA-Z0-9._-]", "_");
+            File markerFile = new File(backupDir, targetHashKey + ".replaced_marker");
+            if (!markerFile.exists() && !target.exists()) {
+                WriteDiagnosticReport report = this.buildFailureDiagnosticReport(
+                        ctx,
+                        resolvedLabel,
+                        absPath,
+                        "TARGET_PATH_NOT_FOUND: Target path '" + absPath + "' galat hai ya ye file aapke device me mojood nhi hai.",
+                        retryAction
+                );
+                this.notifyDiagnosticWriteError(report);
+                return false;
+            }
+        }
+
+        return this.applyWidgetPatchSync(
+                fallbackDir,
+                safeKey,
+                type,
+                rawTarget,
+                byteOffsetHex,
+                orig,
+                chg,
+                live,
+                isActive,
+                resolvedLabel,
+                rawSource
+        );
+    }
+
     public boolean applyWidgetPatchSync(
             final File fallbackDir,
             final String widgetKey,
@@ -890,7 +1034,31 @@ public class LocalConfigStateWriter {
         String detail;
         boolean requiresShizuku = false;
 
-        if (isRestricted) {
+        if (rawErr.startsWith("MISSING_TARGET_PATH:")) {
+            category = "MISSING_TARGET_PATH";
+            title = "Target Path Nhi Dala Hua (Missing Target Path)";
+            detail = "Widget '" + componentLabel + "' execute nhi ho saka kyuki koi Target Path nhi dala gaya hai.\n\n"
+                    + "Why it failed (Akhir kyu fail hua):\n"
+                    + rawErr.substring("MISSING_TARGET_PATH:".length()).trim() + "\n\n"
+                    + "How to fix:\n"
+                    + "Studio Error ke Inspector me is widget ko select karein aur 'Target Path' field me sahi destination file path dalein.";
+        } else if (rawErr.startsWith("MISSING_SOURCE_FILE:")) {
+            category = "MISSING_SOURCE_FILE";
+            title = "Main / Source File Selected Nhi Hai";
+            detail = "Widget '" + componentLabel + "' execute nhi ho saka kyuki replace karne ke liye koi Main File select nhi ki gayi hai.\n\n"
+                    + "Why it failed (Akhir kyu fail hua):\n"
+                    + rawErr.substring("MISSING_SOURCE_FILE:".length()).trim() + "\n\n"
+                    + "How to fix:\n"
+                    + "Studio Error ke Inspector me 'Select File' button daba kar apna replacement file chunein.";
+        } else if (rawErr.startsWith("TARGET_PATH_NOT_FOUND:")) {
+            category = "TARGET_PATH_NOT_FOUND";
+            title = "Galat Path / Target File Exist Nhi Karta";
+            detail = "Target Path:\n" + targetFilePath + "\n\n"
+                    + "Why it failed (Akhir kyu fail hua):\n"
+                    + rawErr.substring("TARGET_PATH_NOT_FOUND:".length()).trim() + "\n\n"
+                    + "How to fix:\n"
+                    + "Ye path galat hai ya aapke device me is naam ki file/folder mojood nhi hai. Kripya sahi existing Target File Path dalein.";
+        } else if (isRestricted) {
             requiresShizuku = true;
             category = "ANDROID_15_RESTRICTED_PATH";
             title = "Android " + Build.VERSION.SDK_INT + " Restricted Path Blocked";
