@@ -691,53 +691,236 @@ extends Service {
         return output;
     }
 
-    private Drawable createWidgetBackgroundDrawable(Bitmap rawBgBmp, int widthDp, int heightDp, int fillColor, int strokeWidthPx, int strokeColor) {
-        int cornerRadiusPx = this.dpToPx(8);
-        if (rawBgBmp != null) {
-            int targetW = Math.max(this.dpToPx(48), this.dpToPx(Math.max(48, widthDp)));
-            int targetH = Math.max(this.dpToPx(32), this.dpToPx(Math.max(32, heightDp)));
-            Bitmap cropped = this.createRoundedCenterCropBitmap(rawBgBmp, targetW, targetH, cornerRadiusPx);
-            if (cropped != null) {
-                if (strokeWidthPx > 0) {
-                    Canvas c = new Canvas(cropped);
-                    Paint borderPaint = new Paint(1);
-                    borderPaint.setStyle(Paint.Style.STROKE);
-                    borderPaint.setColor(strokeColor);
-                    borderPaint.setStrokeWidth((float)strokeWidthPx);
-                    float inset = (float)strokeWidthPx / 2.0f;
-                    android.graphics.RectF rect = new android.graphics.RectF(inset, inset, (float)targetW - inset, (float)targetH - inset);
-                    c.drawRoundRect(rect, (float)cornerRadiusPx, (float)cornerRadiusPx, borderPaint);
-                }
-                return new android.graphics.drawable.BitmapDrawable(this.getResources(), cropped);
+    private static final int[] RGB_LIGHT_SWEEP_COLORS = new int[]{
+            0xFFFF0040,
+            0xFFFF8000,
+            0xFFFFFF00,
+            0xFF00FF40,
+            0xFF00FFFF,
+            0xFF0066FF,
+            0xFF8000FF,
+            0xFFFF00CC,
+            0xFFFF0040
+    };
+
+    private static final class AnimatedWidgetBackgroundDrawable extends Drawable {
+        private final Bitmap rawBgBmp;
+        private int fillColor;
+        private final int strokeWidthPx;
+        private int strokeColor;
+        private final int cornerRadiusPx;
+        private final String animType;
+        private float animProgress = 0.0f;
+        private final Paint fillPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Paint borderPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Paint glowPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final android.graphics.RectF rectF = new android.graphics.RectF();
+        private final android.graphics.Matrix shaderMatrix = new android.graphics.Matrix();
+        private Bitmap cachedCroppedBmp;
+        private int cachedW = -1;
+        private int cachedH = -1;
+
+        AnimatedWidgetBackgroundDrawable(Bitmap rawBgBmp, int fillColor, int strokeWidthPx, int strokeColor, int cornerRadiusPx, String animType) {
+            this.rawBgBmp = rawBgBmp;
+            this.fillColor = fillColor;
+            this.strokeWidthPx = strokeWidthPx;
+            this.strokeColor = strokeColor;
+            this.cornerRadiusPx = cornerRadiusPx;
+            this.animType = animType != null ? animType.trim().toUpperCase() : "NONE";
+            this.fillPaint.setStyle(Paint.Style.FILL);
+            this.borderPaint.setStyle(Paint.Style.STROKE);
+            this.glowPaint.setStyle(Paint.Style.STROKE);
+        }
+
+        void updateColors(int newFillColor, int newStrokeColor) {
+            if (this.fillColor != newFillColor || this.strokeColor != newStrokeColor) {
+                this.fillColor = newFillColor;
+                this.strokeColor = newStrokeColor;
+                invalidateSelf();
             }
         }
-        GradientDrawable gd = new GradientDrawable();
-        gd.setColor(fillColor);
-        gd.setCornerRadius((float)cornerRadiusPx);
-        if (strokeWidthPx > 0) {
-            gd.setStroke(strokeWidthPx, strokeColor);
+
+        void setAnimProgress(float progress) {
+            this.animProgress = progress;
+            invalidateSelf();
         }
-        return gd;
+
+        @Override
+        public void draw(Canvas canvas) {
+            android.graphics.Rect b = getBounds();
+            int w = b.width();
+            int h = b.height();
+            if (w <= 0 || h <= 0) {
+                return;
+            }
+            if (rawBgBmp != null) {
+                if (cachedCroppedBmp == null || cachedW != w || cachedH != h) {
+                    cachedW = w;
+                    cachedH = h;
+                    cachedCroppedBmp = createRoundedCropStatic(rawBgBmp, w, h, cornerRadiusPx);
+                }
+                if (cachedCroppedBmp != null) {
+                    canvas.drawBitmap(cachedCroppedBmp, b.left, b.top, null);
+                } else {
+                    fillPaint.setColor(fillColor);
+                    rectF.set(b.left, b.top, b.right, b.bottom);
+                    canvas.drawRoundRect(rectF, cornerRadiusPx, cornerRadiusPx, fillPaint);
+                }
+            } else {
+                fillPaint.setColor(fillColor);
+                rectF.set(b.left, b.top, b.right, b.bottom);
+                canvas.drawRoundRect(rectF, cornerRadiusPx, cornerRadiusPx, fillPaint);
+            }
+
+            if (strokeWidthPx <= 0) {
+                return;
+            }
+
+            float inset = Math.max(1.0f, strokeWidthPx / 2.0f);
+            rectF.set(b.left + inset, b.top + inset, b.right - inset, b.bottom - inset);
+            float cx = b.exactCenterX();
+            float cy = b.exactCenterY();
+
+            borderPaint.setShader(null);
+            borderPaint.setStrokeWidth(strokeWidthPx);
+
+            if ("RGB_LIGHT".equals(animType)) {
+                android.graphics.SweepGradient sweep = new android.graphics.SweepGradient(cx, cy, RGB_LIGHT_SWEEP_COLORS, null);
+                shaderMatrix.reset();
+                shaderMatrix.postRotate(animProgress * 360.0f, cx, cy);
+                sweep.setLocalMatrix(shaderMatrix);
+
+                glowPaint.setShader(sweep);
+                glowPaint.setStrokeWidth(strokeWidthPx * 1.65f);
+                glowPaint.setAlpha(95);
+                canvas.drawRoundRect(rectF, cornerRadiusPx, cornerRadiusPx, glowPaint);
+
+                borderPaint.setShader(sweep);
+                borderPaint.setAlpha(255);
+                canvas.drawRoundRect(rectF, cornerRadiusPx, cornerRadiusPx, borderPaint);
+            } else if ("RAINBOW".equals(animType)) {
+                float[] hsv = new float[]{(animProgress * 360.0f) % 360.0f, 0.9f, 1.0f};
+                int rainbowCol = Color.HSVToColor(hsv);
+                glowPaint.setShader(null);
+                glowPaint.setColor(rainbowCol);
+                glowPaint.setStrokeWidth(strokeWidthPx * 1.5f);
+                glowPaint.setAlpha(80);
+                canvas.drawRoundRect(rectF, cornerRadiusPx, cornerRadiusPx, glowPaint);
+
+                borderPaint.setColor(rainbowCol);
+                borderPaint.setAlpha(255);
+                canvas.drawRoundRect(rectF, cornerRadiusPx, cornerRadiusPx, borderPaint);
+            } else if ("PULSE".equals(animType)) {
+                int alpha = Math.max(60, Math.min(255, Math.round(65 + animProgress * 190)));
+                int pulseCol = Color.argb(alpha, Color.red(strokeColor), Color.green(strokeColor), Color.blue(strokeColor));
+                borderPaint.setColor(pulseCol);
+                borderPaint.setStrokeWidth(Math.max(1.5f, strokeWidthPx * (0.65f + 0.65f * animProgress)));
+                canvas.drawRoundRect(rectF, cornerRadiusPx, cornerRadiusPx, borderPaint);
+            } else if ("NEON_BLINK".equals(animType)) {
+                boolean high = animProgress > 0.42f;
+                if (high) {
+                    glowPaint.setShader(null);
+                    glowPaint.setColor(strokeColor);
+                    glowPaint.setStrokeWidth(strokeWidthPx * 1.7f);
+                    glowPaint.setAlpha(110);
+                    canvas.drawRoundRect(rectF, cornerRadiusPx, cornerRadiusPx, glowPaint);
+                }
+                int alpha = high ? 255 : 35;
+                borderPaint.setColor(Color.argb(alpha, Color.red(strokeColor), Color.green(strokeColor), Color.blue(strokeColor)));
+                canvas.drawRoundRect(rectF, cornerRadiusPx, cornerRadiusPx, borderPaint);
+            } else if ("GLOW".equals(animType)) {
+                glowPaint.setShader(null);
+                glowPaint.setColor(strokeColor);
+                glowPaint.setStrokeWidth(strokeWidthPx * (1.2f + 0.9f * animProgress));
+                glowPaint.setAlpha(Math.max(30, Math.min(160, Math.round(45 + 115 * animProgress))));
+                canvas.drawRoundRect(rectF, cornerRadiusPx, cornerRadiusPx, glowPaint);
+
+                float[] hsv = new float[3];
+                Color.colorToHSV(strokeColor, hsv);
+                hsv[1] = Math.max(0.25f, 1.0f - (animProgress * 0.45f));
+                hsv[2] = 1.0f;
+                borderPaint.setColor(Color.HSVToColor(hsv));
+                borderPaint.setAlpha(255);
+                canvas.drawRoundRect(rectF, cornerRadiusPx, cornerRadiusPx, borderPaint);
+            } else {
+                borderPaint.setColor(strokeColor);
+                canvas.drawRoundRect(rectF, cornerRadiusPx, cornerRadiusPx, borderPaint);
+            }
+        }
+
+        private static Bitmap createRoundedCropStatic(Bitmap src, int targetW, int targetH, int cornerRadiusPx) {
+            if (src == null || src.isRecycled() || targetW <= 0 || targetH <= 0) {
+                return null;
+            }
+            try {
+                Bitmap output = Bitmap.createBitmap(targetW, targetH, Bitmap.Config.ARGB_8888);
+                Canvas canvas = new Canvas(output);
+                Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.FILTER_BITMAP_FLAG);
+                android.graphics.RectF rectF = new android.graphics.RectF(0f, 0f, targetW, targetH);
+                canvas.drawRoundRect(rectF, cornerRadiusPx, cornerRadiusPx, paint);
+                paint.setXfermode(new android.graphics.PorterDuffXfermode(android.graphics.PorterDuff.Mode.SRC_IN));
+                float scale = Math.max((float) targetW / (float) src.getWidth(), (float) targetH / (float) src.getHeight());
+                float scaledW = scale * src.getWidth();
+                float scaledH = scale * src.getHeight();
+                float left = (targetW - scaledW) / 2.0f;
+                float top = (targetH - scaledH) / 2.0f;
+                android.graphics.RectF dstRect = new android.graphics.RectF(left, top, left + scaledW, top + scaledH);
+                canvas.drawBitmap(src, null, dstRect, paint);
+                return output;
+            } catch (Throwable t) {
+                return null;
+            }
+        }
+
+        @Override
+        public void setAlpha(int alpha) {
+            fillPaint.setAlpha(alpha);
+            borderPaint.setAlpha(alpha);
+        }
+
+        @Override
+        public void setColorFilter(android.graphics.ColorFilter colorFilter) {
+            fillPaint.setColorFilter(colorFilter);
+            borderPaint.setColorFilter(colorFilter);
+        }
+
+        @Override
+        public int getOpacity() {
+            return android.graphics.PixelFormat.TRANSLUCENT;
+        }
+    }
+
+    private Drawable createWidgetBackgroundDrawable(Bitmap rawBgBmp, int widthDp, int heightDp, int fillColor, int strokeWidthPx, int strokeColor) {
+        return new AnimatedWidgetBackgroundDrawable(rawBgBmp, fillColor, strokeWidthPx, strokeColor, this.dpToPx(8), "NONE");
     }
 
     private int computeBorderStrokePx(DynamicOverlayRegistry.OverlayItemSpec spec) {
+        String animType = spec != null && spec.borderAnimation != null ? spec.borderAnimation.trim().toUpperCase() : "NONE";
+        boolean hasAnim = !animType.isEmpty() && !"NONE".equals(animType);
         int pct = spec != null ? Math.max(0, Math.min(100, spec.borderStrokePercent)) : 25;
         if (pct <= 0) {
-            return 0;
+            if (hasAnim) {
+                pct = 35;
+            } else {
+                return 0;
+            }
         }
-        if (spec != null && spec.borderColorHex != null && "#00000000".equalsIgnoreCase(spec.borderColorHex.trim())) {
+        if (!hasAnim && spec != null && spec.borderColorHex != null && "#00000000".equalsIgnoreCase(spec.borderColorHex.trim())) {
             return 0;
         }
         float dpVal = (pct / 100.0f) * 7.5f;
-        return Math.max(1, Math.round(dpVal * this.getResources().getDisplayMetrics().density));
+        int minPx = hasAnim ? Math.max(2, this.dpToPx(2)) : 1;
+        return Math.max(minPx, Math.round(dpVal * this.getResources().getDisplayMetrics().density));
     }
 
     private int resolveCustomBorderColor(DynamicOverlayRegistry.OverlayItemSpec spec, int fallbackColor) {
         if (spec == null || spec.borderColorHex == null || spec.borderColorHex.trim().isEmpty()) {
             return fallbackColor;
         }
+        String animType = spec.borderAnimation != null ? spec.borderAnimation.trim().toUpperCase() : "NONE";
+        boolean hasAnim = !animType.isEmpty() && !"NONE".equals(animType);
         if ("#00000000".equalsIgnoreCase(spec.borderColorHex.trim())) {
-            return 0;
+            return hasAnim ? fallbackColor : 0;
         }
         return this.parseSafeColor(spec.borderColorHex.trim(), fallbackColor);
     }
@@ -748,43 +931,41 @@ extends Service {
         }
         final int strokePx = this.computeBorderStrokePx(spec);
         final String animType = spec.borderAnimation != null ? spec.borderAnimation.trim().toUpperCase() : "NONE";
+        final AnimatedWidgetBackgroundDrawable animDrawable = new AnimatedWidgetBackgroundDrawable(
+                rawBgBmp,
+                fillColor,
+                strokePx,
+                baseStrokeColor,
+                this.dpToPx(8),
+                animType
+        );
+        targetView.setBackground(animDrawable);
         if (strokePx <= 0 || "NONE".equals(animType) || animType.isEmpty()) {
             return;
         }
-        android.animation.ValueAnimator animator = android.animation.ValueAnimator.ofFloat(0.0f, 1.0f);
-        animator.setDuration("NEON_BLINK".equals(animType) ? 650L : 1400L);
+        final boolean isContinuousCycle = "RGB_LIGHT".equals(animType) || "RAINBOW".equals(animType);
+        final android.animation.ValueAnimator animator = android.animation.ValueAnimator.ofFloat(0.0f, 1.0f);
+        if ("NEON_BLINK".equals(animType)) {
+            animator.setDuration(600L);
+        } else if ("RGB_LIGHT".equals(animType) || "RAINBOW".equals(animType)) {
+            animator.setDuration(2000L);
+        } else {
+            animator.setDuration(1200L);
+        }
+        animator.setInterpolator(new android.view.animation.LinearInterpolator());
         animator.setRepeatCount(android.animation.ValueAnimator.INFINITE);
-        animator.setRepeatMode("RAINBOW".equals(animType) ? android.animation.ValueAnimator.RESTART : android.animation.ValueAnimator.REVERSE);
+        animator.setRepeatMode(isContinuousCycle ? android.animation.ValueAnimator.RESTART : android.animation.ValueAnimator.REVERSE);
         animator.addUpdateListener(anim -> {
-            if (!targetView.isAttachedToWindow()) {
-                return;
-            }
             float frac = (Float) anim.getAnimatedValue();
-            int animColor = baseStrokeColor;
-            int animStroke = strokePx;
-            if ("RAINBOW".equals(animType)) {
-                float[] hsv = new float[]{frac * 360.0f, 0.9f, 1.0f};
-                animColor = Color.HSVToColor(hsv);
-            } else if ("PULSE".equals(animType)) {
-                int alpha = Math.max(45, Math.min(255, Math.round(60 + frac * 195)));
-                animColor = Color.argb(alpha, Color.red(baseStrokeColor), Color.green(baseStrokeColor), Color.blue(baseStrokeColor));
-                animStroke = Math.max(1, Math.round(strokePx * (0.65f + 0.55f * frac)));
-            } else if ("NEON_BLINK".equals(animType)) {
-                int alpha = frac > 0.45f ? 255 : 25;
-                animColor = Color.argb(alpha, Color.red(baseStrokeColor), Color.green(baseStrokeColor), Color.blue(baseStrokeColor));
-            } else if ("GLOW".equals(animType)) {
-                float[] hsv = new float[3];
-                Color.colorToHSV(baseStrokeColor, hsv);
-                hsv[1] = Math.max(0.2f, 1.0f - (frac * 0.5f));
-                hsv[2] = 1.0f;
-                animColor = Color.HSVToColor(hsv);
-            }
-            targetView.setBackground(this.createWidgetBackgroundDrawable(rawBgBmp, spec.widthDp, spec.heightDp, fillColor, animStroke, animColor));
+            animDrawable.setAnimProgress(frac);
+            targetView.postInvalidateOnAnimation();
         });
         targetView.addOnAttachStateChangeListener(new View.OnAttachStateChangeListener() {
             @Override
             public void onViewAttachedToWindow(View v) {
-                animator.start();
+                if (!animator.isStarted()) {
+                    animator.start();
+                }
             }
 
             @Override
@@ -792,6 +973,7 @@ extends Service {
                 animator.cancel();
             }
         });
+        animator.start();
     }
 
     private View buildDynamicComponentView(final DynamicOverlayRegistry.OverlayItemSpec spec) {
@@ -843,12 +1025,18 @@ extends Service {
                 Switch toggleSwitch = new Switch((Context)this);
                 toggleSwitch.setShowText(false);
                 toggleSwitch.setChecked(false);
+                this.attachWidgetBorderAnimationIfConfigured(row, spec, resolvedWidgetBgBmp, bgColor, customStrokeColor);
                 Runnable updateVisuals = () -> {
                     boolean on = isCheckedState[0];
                     boolean isDefaultWhite = spec.bgColorHex == null || spec.bgColorHex.trim().isEmpty() || "#FFFFFF".equalsIgnoreCase(spec.bgColorHex.trim());
                     int fillCol = on && isDefaultWhite ? Color.parseColor((String)"#ECFDF5") : bgColor;
-                    int strokeCol = on ? Color.parseColor((String)"#00C853") : customStrokeColor;
-                    row.setBackground(this.createWidgetBackgroundDrawable(resolvedWidgetBgBmp, spec.widthDp, spec.heightDp, fillCol, customStrokePx, strokeCol));
+                    boolean hasCustomBorder = spec.borderColorHex != null && !spec.borderColorHex.trim().isEmpty() && !"#38BDF8".equalsIgnoreCase(spec.borderColorHex.trim()) && !"#00000000".equalsIgnoreCase(spec.borderColorHex.trim());
+                    int strokeCol = (on && !hasCustomBorder) ? Color.parseColor((String)"#00C853") : customStrokeColor;
+                    if (row.getBackground() instanceof AnimatedWidgetBackgroundDrawable) {
+                        ((AnimatedWidgetBackgroundDrawable) row.getBackground()).updateColors(fillCol, strokeCol);
+                    } else {
+                        row.setBackground(this.createWidgetBackgroundDrawable(resolvedWidgetBgBmp, spec.widthDp, spec.heightDp, fillCol, customStrokePx, strokeCol));
+                    }
                     GradientDrawable badgeBg = new GradientDrawable();
                     badgeBg.setCornerRadius((float)this.dpToPx(4));
                     badgeBg.setColor(on ? Color.parseColor((String)"#00C853") : Color.parseColor((String)"#EF4444"));
@@ -856,7 +1044,6 @@ extends Service {
                     onOffBadge.setText((CharSequence)(on ? "ON" : "OFF"));
                 };
                 updateVisuals.run();
-                this.attachWidgetBorderAnimationIfConfigured(row, spec, resolvedWidgetBgBmp, bgColor, customStrokeColor);
                 toggleSwitch.setOnCheckedChangeListener((btn, isChecked) -> {
                     if (suppressCallback[0]) {
                         return;
@@ -1081,12 +1268,18 @@ extends Service {
         pillBadge.setPadding(this.dpToPx(8), this.dpToPx(2), this.dpToPx(8), this.dpToPx(2));
         LinearLayout.LayoutParams pillLp = new LinearLayout.LayoutParams(-2, -2);
         pillLp.leftMargin = this.dpToPx(6);
+        this.attachWidgetBorderAnimationIfConfigured(btnRow, spec, resolvedWidgetBgBmp, bgColor, customStrokeColor);
         Runnable updateBtnVisuals = () -> {
             boolean on = isBtnOn[0];
             boolean isDefaultBlue = spec.bgColorHex == null || spec.bgColorHex.trim().isEmpty() || "#2563EB".equalsIgnoreCase(spec.bgColorHex.trim());
             int fillCol = on && isDefaultBlue ? Color.parseColor((String)"#00C853") : bgColor;
-            int strokeCol = on ? Color.parseColor((String)"#00C853") : customStrokeColor;
-            btnRow.setBackground(this.createWidgetBackgroundDrawable(resolvedWidgetBgBmp, spec.widthDp, spec.heightDp, fillCol, customStrokePx, strokeCol));
+            boolean hasCustomBorder = spec.borderColorHex != null && !spec.borderColorHex.trim().isEmpty() && !"#38BDF8".equalsIgnoreCase(spec.borderColorHex.trim()) && !"#00000000".equalsIgnoreCase(spec.borderColorHex.trim());
+            int strokeCol = (on && !hasCustomBorder) ? Color.parseColor((String)"#00C853") : customStrokeColor;
+            if (btnRow.getBackground() instanceof AnimatedWidgetBackgroundDrawable) {
+                ((AnimatedWidgetBackgroundDrawable) btnRow.getBackground()).updateColors(fillCol, strokeCol);
+            } else {
+                btnRow.setBackground(this.createWidgetBackgroundDrawable(resolvedWidgetBgBmp, spec.widthDp, spec.heightDp, fillCol, customStrokePx, strokeCol));
+            }
             labelTv.setTextColor(on && isDefaultBlue && resolvedWidgetBgBmp == null ? -1 : txtColor);
             GradientDrawable pillBg = new GradientDrawable();
             pillBg.setColor(on ? Color.parseColor((String)"#047857") : Color.parseColor((String)"#EF4444"));
@@ -1096,7 +1289,6 @@ extends Service {
             pillBadge.setText((CharSequence)(on ? "ON" : "OFF"));
         };
         updateBtnVisuals.run();
-        this.attachWidgetBorderAnimationIfConfigured(btnRow, spec, resolvedWidgetBgBmp, bgColor, customStrokeColor);
         View.OnClickListener clickListener = v -> {
             final DynamicOverlayRegistry.OverlayItemSpec latest = DynamicOverlayRegistry.getSpecById(spec.id, spec);
             final boolean nextOn = !isBtnOn[0];

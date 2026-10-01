@@ -4,6 +4,12 @@ import android.graphics.BitmapFactory
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -172,10 +178,11 @@ private val DefaultWidgetBorderColorPresets = listOf(
 
 private val WidgetBorderAnimationPresets = listOf(
     "NONE" to "Static (No Anim)",
-    "PULSE" to "Pulse Breath",
-    "RAINBOW" to "Rainbow RGB",
-    "NEON_BLINK" to "Neon Blink",
-    "GLOW" to "Soft Glow"
+    "RGB_LIGHT" to "🌈 RGB Light",
+    "RAINBOW" to "🎨 Rainbow RGB",
+    "PULSE" to "💓 Pulse Breath",
+    "NEON_BLINK" to "⚡ Neon Blink",
+    "GLOW" to "✨ Soft Glow"
 )
 
 private val InspectorDarkBg = Color(0xFF050B18)
@@ -1373,6 +1380,35 @@ fun ComponentPropertyInspectorSheet(
                         val liveBgColor = parseHexColorSafe(bgHex, Color(0xFF334155))
                         val liveTextColor = parseHexColorSafe(textHex, Color.White)
 
+                        val inspectorAnimTransition = rememberInfiniteTransition(label = "inspectorBorderAnim")
+                        val inspectorRgbAngle by inspectorAnimTransition.animateFloat(
+                            initialValue = 0f,
+                            targetValue = 360f,
+                            animationSpec = infiniteRepeatable(
+                                animation = tween(durationMillis = 1800, easing = LinearEasing),
+                                repeatMode = RepeatMode.Restart
+                            ),
+                            label = "inspectorRgbAngle"
+                        )
+                        val inspectorPulse by inspectorAnimTransition.animateFloat(
+                            initialValue = 0f,
+                            targetValue = 1f,
+                            animationSpec = infiniteRepeatable(
+                                animation = tween(durationMillis = 700, easing = LinearEasing),
+                                repeatMode = RepeatMode.Reverse
+                            ),
+                            label = "inspectorPulse"
+                        )
+                        val inspectorBlink by inspectorAnimTransition.animateFloat(
+                            initialValue = 0f,
+                            targetValue = 1f,
+                            animationSpec = infiniteRepeatable(
+                                animation = tween(durationMillis = 380, easing = LinearEasing),
+                                repeatMode = RepeatMode.Reverse
+                            ),
+                            label = "inspectorBlink"
+                        )
+
                         // 0. Voice Section (Exclusively in Style tab)
                         renderVoiceSection()
 
@@ -1383,7 +1419,16 @@ fun ComponentPropertyInspectorSheet(
                                 .fillMaxWidth()
                                 .clip(RoundedCornerShape(12.dp))
                                 .background(Color(0xFF09152B))
-                                .border(BorderStroke(1.dp, Color(0xFF1E3A5F)), RoundedCornerShape(12.dp))
+                                .drawAnimatedWidgetCornerBorder(
+                                    borderColorHex = borderColorHex,
+                                    borderStrokePercent = borderStrokePercent,
+                                    borderAnimation = borderAnimation,
+                                    cornerRadiusDp = 12f,
+                                    rgbSweepAngleDeg = inspectorRgbAngle,
+                                    pulseProgress = inspectorPulse,
+                                    blinkProgress = inspectorBlink,
+                                    isSelectedFallback = true
+                                )
                                 .padding(10.dp)
                         ) {
                             Row(
@@ -1398,7 +1443,7 @@ fun ComponentPropertyInspectorSheet(
                                     fontWeight = FontWeight.ExtraBold
                                 )
                                 Text(
-                                    text = if (borderStrokePercent == 0 || borderColorHex.equals("#00000000", ignoreCase = true)) {
+                                    text = if (borderAnimation == "NONE" && (borderStrokePercent == 0 || borderColorHex.equals("#00000000", ignoreCase = true))) {
                                         "Transparent (0)"
                                     } else {
                                         "Size: $borderStrokePercent / 100 • $borderAnimation"
@@ -1414,7 +1459,17 @@ fun ComponentPropertyInspectorSheet(
                                 onValueChange = { newVal ->
                                     val nextPct = newVal.roundToInt().coerceIn(0, 100)
                                     borderStrokePercent = nextPct
-                                    onSaveComponent(buildUpdated(overrideBorderStrokePercent = nextPct))
+                                    val resolvedColor = if (nextPct > 0 && borderColorHex.equals("#00000000", ignoreCase = true)) {
+                                        "#38BDF8".also { borderColorHex = it }
+                                    } else {
+                                        borderColorHex
+                                    }
+                                    onSaveComponent(
+                                        buildUpdated(
+                                            overrideBorderColorHex = resolvedColor,
+                                            overrideBorderStrokePercent = nextPct
+                                        )
+                                    )
                                 },
                                 valueRange = 0f..100f,
                                 colors = SliderDefaults.colors(
@@ -1448,12 +1503,15 @@ fun ComponentPropertyInspectorSheet(
                                         modifier = Modifier
                                             .clickable {
                                                 borderColorHex = presetHex
-                                                val nextStroke = if (presetHex == "#00000000") 0 else borderStrokePercent.coerceAtLeast(15)
+                                                val nextStroke = if (presetHex == "#00000000") 0 else borderStrokePercent.coerceAtLeast(25)
                                                 borderStrokePercent = nextStroke
+                                                val nextAnim = if (presetHex == "#00000000") "NONE" else borderAnimation
+                                                borderAnimation = nextAnim
                                                 onSaveComponent(
                                                     buildUpdated(
                                                         overrideBorderColorHex = presetHex,
-                                                        overrideBorderStrokePercent = nextStroke
+                                                        overrideBorderStrokePercent = nextStroke,
+                                                        overrideBorderAnimation = nextAnim
                                                     )
                                                 )
                                             }
@@ -1501,12 +1559,30 @@ fun ComponentPropertyInspectorSheet(
                                         modifier = Modifier
                                             .clickable {
                                                 borderAnimation = animCode
-                                                onSaveComponent(buildUpdated(overrideBorderAnimation = animCode))
+                                                val nextStroke = if (animCode != "NONE" && borderStrokePercent < 30) {
+                                                    35
+                                                } else {
+                                                    borderStrokePercent
+                                                }
+                                                val nextBorderColor = if (animCode != "NONE" && borderColorHex.equals("#00000000", ignoreCase = true)) {
+                                                    "#38BDF8"
+                                                } else {
+                                                    borderColorHex
+                                                }
+                                                borderStrokePercent = nextStroke
+                                                borderColorHex = nextBorderColor
+                                                onSaveComponent(
+                                                    buildUpdated(
+                                                        overrideBorderColorHex = nextBorderColor,
+                                                        overrideBorderStrokePercent = nextStroke,
+                                                        overrideBorderAnimation = animCode
+                                                    )
+                                                )
                                             }
                                             .testTag("border_anim_preset_${animCode.lowercase(Locale.US)}")
                                     ) {
                                         Text(
-                                            text = "✨ $animLabel",
+                                            text = animLabel,
                                             color = Color.White,
                                             fontSize = 10.sp,
                                             fontWeight = if (isSelectedAnim) FontWeight.ExtraBold else FontWeight.Medium,
@@ -1607,10 +1683,22 @@ fun ComponentPropertyInspectorSheet(
                                 Surface(
                                     shape = RoundedCornerShape(8.dp),
                                     color = liveBgColor,
-                                    border = BorderStroke(1.dp, Color(0xFF64748B)),
                                     modifier = Modifier.height(44.dp)
                                 ) {
-                                    Box(contentAlignment = Alignment.Center) {
+                                    Box(
+                                        modifier = Modifier
+                                            .drawAnimatedWidgetCornerBorder(
+                                                borderColorHex = borderColorHex,
+                                                borderStrokePercent = borderStrokePercent,
+                                                borderAnimation = borderAnimation,
+                                                cornerRadiusDp = 8f,
+                                                rgbSweepAngleDeg = inspectorRgbAngle,
+                                                pulseProgress = inspectorPulse,
+                                                blinkProgress = inspectorBlink,
+                                                isSelectedFallback = true
+                                            ),
+                                        contentAlignment = Alignment.Center
+                                    ) {
                                         if (widgetBgPreviewBitmap != null) {
                                             Image(
                                                 bitmap = widgetBgPreviewBitmap,

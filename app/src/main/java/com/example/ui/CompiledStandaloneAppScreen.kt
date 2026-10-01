@@ -5,6 +5,12 @@ import android.graphics.BitmapFactory
 import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -861,6 +867,35 @@ private fun StandaloneDraggableFloatingWindow(
                         }
 
                         // Canvas Body matching Studio Preview
+                        val standaloneAnimTransition = rememberInfiniteTransition(label = "standaloneBorderAnim")
+                        val standaloneRgbAngle by standaloneAnimTransition.animateFloat(
+                            initialValue = 0f,
+                            targetValue = 360f,
+                            animationSpec = infiniteRepeatable(
+                                animation = tween(durationMillis = 1800, easing = LinearEasing),
+                                repeatMode = RepeatMode.Restart
+                            ),
+                            label = "standaloneRgbAngle"
+                        )
+                        val standalonePulse by standaloneAnimTransition.animateFloat(
+                            initialValue = 0f,
+                            targetValue = 1f,
+                            animationSpec = infiniteRepeatable(
+                                animation = tween(durationMillis = 700, easing = LinearEasing),
+                                repeatMode = RepeatMode.Reverse
+                            ),
+                            label = "standalonePulse"
+                        )
+                        val standaloneBlink by standaloneAnimTransition.animateFloat(
+                            initialValue = 0f,
+                            targetValue = 1f,
+                            animationSpec = infiniteRepeatable(
+                                animation = tween(durationMillis = 380, easing = LinearEasing),
+                                repeatMode = RepeatMode.Reverse
+                            ),
+                            label = "standaloneBlink"
+                        )
+
                         Box(modifier = Modifier.fillMaxSize()) {
                             components.forEach { comp ->
                             val isToggle = comp.type == "TOGGLE"
@@ -872,11 +907,6 @@ private fun StandaloneDraggableFloatingWindow(
                                 parseHexColorSafe(comp.bgColorHex, Color(0xFF2563EB))
                             }
                             val widgetText = parseHexColorSafe(comp.textColorHex, Color(0xFF0F172A))
-                            val borderColor = when {
-                                isToggle && isChecked -> Color(0xFF10B981)
-                                isToggle -> Color(0xFF64748B)
-                                else -> Color(0xFFCBD5E1)
-                            }
 
                             val widgetBgBitmap = remember(comp.bgImagePath) {
                                 if (comp.bgImagePath.isNotBlank()) {
@@ -891,11 +921,6 @@ private fun StandaloneDraggableFloatingWindow(
                                 modifier = Modifier
                                     .offset(comp.posXDp.dp, comp.posYDp.dp)
                                     .size(comp.widthDp.dp, comp.heightDp.dp)
-                                    .border(
-                                        width = if (isToggle) 2.dp else 1.dp,
-                                        color = borderColor,
-                                        shape = RoundedCornerShape(8.dp)
-                                    )
                                     .clickable {
                                         val nextVal = if (isToggle) {
                                             if (isChecked) "0" else "1"
@@ -905,7 +930,20 @@ private fun StandaloneDraggableFloatingWindow(
                                         onTriggerComponent(comp, nextVal)
                                     }
                             ) {
-                                Box(modifier = Modifier.fillMaxSize()) {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .drawAnimatedWidgetCornerBorder(
+                                            borderColorHex = comp.borderColorHex,
+                                            borderStrokePercent = comp.borderStrokePercent,
+                                            borderAnimation = comp.borderAnimation,
+                                            cornerRadiusDp = 8f,
+                                            rgbSweepAngleDeg = standaloneRgbAngle,
+                                            pulseProgress = standalonePulse,
+                                            blinkProgress = standaloneBlink,
+                                            isSelectedFallback = false
+                                        )
+                                ) {
                                     if (widgetBgBitmap != null) {
                                         Image(
                                             bitmap = widgetBgBitmap,

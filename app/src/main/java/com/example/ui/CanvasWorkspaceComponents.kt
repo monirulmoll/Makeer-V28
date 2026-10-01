@@ -76,9 +76,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.nativeCanvas
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
@@ -434,6 +437,253 @@ fun parseHexColorSafe(hex: String, fallback: Color = Color(0xFF2563EB)): Color {
         Color(android.graphics.Color.parseColor(formatted))
     } catch (_: Exception) {
         fallback
+    }
+}
+
+private val RgbLightSweepColors = intArrayOf(
+    android.graphics.Color.parseColor("#FF0040"),
+    android.graphics.Color.parseColor("#FF8000"),
+    android.graphics.Color.parseColor("#FFEE00"),
+    android.graphics.Color.parseColor("#00FF40"),
+    android.graphics.Color.parseColor("#00E5FF"),
+    android.graphics.Color.parseColor("#2979FF"),
+    android.graphics.Color.parseColor("#AA00FF"),
+    android.graphics.Color.parseColor("#FF00AA"),
+    android.graphics.Color.parseColor("#FF0040")
+)
+
+fun Modifier.drawAnimatedWidgetCornerBorder(
+    borderColorHex: String,
+    borderStrokePercent: Int,
+    borderAnimation: String,
+    cornerRadiusDp: Float = 8f,
+    rgbSweepAngleDeg: Float = 0f,
+    pulseProgress: Float = 1f,
+    blinkProgress: Float = 1f,
+    isSelectedFallback: Boolean = false
+): Modifier = this.drawWithContent {
+    drawContent()
+
+    val animMode = borderAnimation.trim().uppercase()
+    val hasActiveAnim = animMode != "NONE" && animMode.isNotEmpty()
+    val effectivePct = if (hasActiveAnim && borderStrokePercent in 1..24) {
+        30
+    } else if (hasActiveAnim && borderStrokePercent <= 0) {
+        35
+    } else {
+        borderStrokePercent.coerceIn(0, 100)
+    }
+
+    val isTransparentStatic = !hasActiveAnim && (
+        effectivePct <= 0 || borderColorHex.trim().equals("#00000000", ignoreCase = true)
+    )
+    if (isTransparentStatic && !isSelectedFallback) {
+        return@drawWithContent
+    }
+
+    val baseColor = if (borderColorHex.trim().equals("#00000000", ignoreCase = true)) {
+        Color(0xFF38BDF8)
+    } else {
+        parseHexColorSafe(borderColorHex, Color(0xFF38BDF8))
+    }
+
+    val rawStrokePx = if (isTransparentStatic && isSelectedFallback) {
+        1.5.dp.toPx()
+    } else {
+        ((effectivePct / 100f) * 8f).coerceIn(1.2f, 8.5f).dp.toPx()
+    }
+    val cornerPx = cornerRadiusDp.dp.toPx()
+    val nativeCanvas = drawContext.canvas.nativeCanvas
+
+    when (animMode) {
+        "RGB_LIGHT" -> {
+            val cx = size.width / 2f
+            val cy = size.height / 2f
+            val matrix = android.graphics.Matrix().apply {
+                setRotate(rgbSweepAngleDeg, cx, cy)
+            }
+            val sweepShader = android.graphics.SweepGradient(cx, cy, RgbLightSweepColors, null).apply {
+                setLocalMatrix(matrix)
+            }
+
+            // Outer glowing RGB halo
+            val glowPaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+                style = android.graphics.Paint.Style.STROKE
+                strokeWidth = rawStrokePx * 1.85f
+                shader = sweepShader
+                alpha = 115
+            }
+            val glowInset = (rawStrokePx * 1.85f) / 2f
+            nativeCanvas.drawRoundRect(
+                glowInset,
+                glowInset,
+                size.width - glowInset,
+                size.height - glowInset,
+                cornerPx,
+                cornerPx,
+                glowPaint
+            )
+
+            // Crisp rotating RGB core border line
+            val corePaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+                style = android.graphics.Paint.Style.STROKE
+                strokeWidth = rawStrokePx
+                shader = sweepShader
+                alpha = 255
+            }
+            val inset = rawStrokePx / 2f
+            nativeCanvas.drawRoundRect(
+                inset,
+                inset,
+                size.width - inset,
+                size.height - inset,
+                cornerPx,
+                cornerPx,
+                corePaint
+            )
+        }
+
+        "RAINBOW" -> {
+            val rainbowInt = android.graphics.Color.HSVToColor(
+                floatArrayOf(rgbSweepAngleDeg % 360f, 0.92f, 1.0f)
+            )
+            val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+                style = android.graphics.Paint.Style.STROKE
+                strokeWidth = rawStrokePx
+                color = rainbowInt
+            }
+            val inset = rawStrokePx / 2f
+            nativeCanvas.drawRoundRect(
+                inset,
+                inset,
+                size.width - inset,
+                size.height - inset,
+                cornerPx,
+                cornerPx,
+                paint
+            )
+        }
+
+        "PULSE" -> {
+            val animatedStroke = rawStrokePx * (0.65f + 0.55f * pulseProgress)
+            val alphaInt = (55 + (pulseProgress * 200f)).roundToInt().coerceIn(45, 255)
+            val baseArgb = baseColor.toArgb()
+            val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+                style = android.graphics.Paint.Style.STROKE
+                strokeWidth = animatedStroke
+                color = android.graphics.Color.argb(
+                    alphaInt,
+                    android.graphics.Color.red(baseArgb),
+                    android.graphics.Color.green(baseArgb),
+                    android.graphics.Color.blue(baseArgb)
+                )
+            }
+            val inset = animatedStroke / 2f
+            nativeCanvas.drawRoundRect(
+                inset,
+                inset,
+                size.width - inset,
+                size.height - inset,
+                cornerPx,
+                cornerPx,
+                paint
+            )
+        }
+
+        "NEON_BLINK" -> {
+            val isBright = blinkProgress >= 0.45f
+            val baseArgb = baseColor.toArgb()
+            val alphaInt = if (isBright) 255 else 35
+            val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+                style = android.graphics.Paint.Style.STROKE
+                strokeWidth = if (isBright) rawStrokePx * 1.18f else rawStrokePx * 0.85f
+                color = android.graphics.Color.argb(
+                    alphaInt,
+                    android.graphics.Color.red(baseArgb),
+                    android.graphics.Color.green(baseArgb),
+                    android.graphics.Color.blue(baseArgb)
+                )
+            }
+            val inset = paint.strokeWidth / 2f
+            nativeCanvas.drawRoundRect(
+                inset,
+                inset,
+                size.width - inset,
+                size.height - inset,
+                cornerPx,
+                cornerPx,
+                paint
+            )
+        }
+
+        "GLOW" -> {
+            val baseArgb = baseColor.toArgb()
+            val outerStroke = rawStrokePx * (1.35f + 0.85f * pulseProgress)
+            val outerAlpha = (65 + (pulseProgress * 135f)).roundToInt().coerceIn(50, 210)
+            val glowPaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+                style = android.graphics.Paint.Style.STROKE
+                strokeWidth = outerStroke
+                color = android.graphics.Color.argb(
+                    outerAlpha,
+                    android.graphics.Color.red(baseArgb),
+                    android.graphics.Color.green(baseArgb),
+                    android.graphics.Color.blue(baseArgb)
+                )
+            }
+            val outerInset = outerStroke / 2f
+            nativeCanvas.drawRoundRect(
+                outerInset,
+                outerInset,
+                size.width - outerInset,
+                size.height - outerInset,
+                cornerPx,
+                cornerPx,
+                glowPaint
+            )
+
+            val hsv = FloatArray(3)
+            android.graphics.Color.colorToHSV(baseArgb, hsv)
+            hsv[1] = (hsv[1] * (1f - 0.45f * pulseProgress)).coerceIn(0f, 1f)
+            hsv[2] = 1f
+            val corePaint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+                style = android.graphics.Paint.Style.STROKE
+                strokeWidth = rawStrokePx
+                color = android.graphics.Color.HSVToColor(hsv)
+            }
+            val coreInset = rawStrokePx / 2f
+            nativeCanvas.drawRoundRect(
+                coreInset,
+                coreInset,
+                size.width - coreInset,
+                size.height - coreInset,
+                cornerPx,
+                cornerPx,
+                corePaint
+            )
+        }
+
+        else -> {
+            val finalColor = if (isTransparentStatic && isSelectedFallback) {
+                Color(0xFF38BDF8).copy(alpha = 0.7f)
+            } else {
+                baseColor
+            }
+            val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+                style = android.graphics.Paint.Style.STROKE
+                strokeWidth = rawStrokePx
+                color = finalColor.toArgb()
+            }
+            val inset = rawStrokePx / 2f
+            nativeCanvas.drawRoundRect(
+                inset,
+                inset,
+                size.width - inset,
+                size.height - inset,
+                cornerPx,
+                cornerPx,
+                paint
+            )
+        }
     }
 }
 
@@ -944,32 +1194,32 @@ fun InteractiveOverlayCanvas(
                                         }
 
                                         val infiniteTransition = rememberInfiniteTransition(label = "widgetBorderAnim")
+                                        val rgbSweepAngle by infiniteTransition.animateFloat(
+                                            initialValue = 0f,
+                                            targetValue = 360f,
+                                            animationSpec = infiniteRepeatable(
+                                                animation = tween(durationMillis = 1800, easing = LinearEasing),
+                                                repeatMode = RepeatMode.Restart
+                                            ),
+                                            label = "rgbSweepAngle"
+                                        )
                                         val pulseAlpha by infiniteTransition.animateFloat(
-                                            initialValue = 0.28f,
+                                            initialValue = 0.0f,
                                             targetValue = 1.0f,
                                             animationSpec = infiniteRepeatable(
-                                                animation = tween(durationMillis = 750, easing = LinearEasing),
+                                                animation = tween(durationMillis = 700, easing = LinearEasing),
                                                 repeatMode = RepeatMode.Reverse
                                             ),
                                             label = "pulseAlpha"
                                         )
-                                        val rainbowColor by infiniteTransition.animateColor(
-                                            initialValue = Color(0xFF38BDF8),
-                                            targetValue = Color(0xFFEC4899),
+                                        val blinkProgress by infiniteTransition.animateFloat(
+                                            initialValue = 0.0f,
+                                            targetValue = 1.0f,
                                             animationSpec = infiniteRepeatable(
-                                                animation = tween(durationMillis = 1100, easing = LinearEasing),
+                                                animation = tween(durationMillis = 380, easing = LinearEasing),
                                                 repeatMode = RepeatMode.Reverse
                                             ),
-                                            label = "rainbowColor"
-                                        )
-                                        val glowExtraDp by infiniteTransition.animateFloat(
-                                            initialValue = 0f,
-                                            targetValue = 2.5f,
-                                            animationSpec = infiniteRepeatable(
-                                                animation = tween(durationMillis = 650, easing = LinearEasing),
-                                                repeatMode = RepeatMode.Reverse
-                                            ),
-                                            label = "glowExtraDp"
+                                            label = "blinkProgress"
                                         )
 
                                         components.forEach { comp ->
@@ -1007,26 +1257,6 @@ fun InteractiveOverlayCanvas(
                                             }
                                             val widgetText = parseHexColorSafe(comp.textColorHex, Color(0xFF0F172A))
 
-                                            val strokePct = comp.borderStrokePercent.coerceIn(0, 100)
-                                            val isTransparentCustomBorder = strokePct == 0 ||
-                                                comp.borderColorHex.equals("#00000000", ignoreCase = true)
-                                            val baseCustomBorderColor = parseHexColorSafe(comp.borderColorHex, Color(0xFF38BDF8))
-                                            val animMode = comp.borderAnimation.uppercase()
-                                            val resolvedBorderColor = when {
-                                                isTransparentCustomBorder -> if (isSelected) Color(0xFF38BDF8).copy(alpha = 0.65f) else Color.Transparent
-                                                animMode == "RAINBOW" -> rainbowColor
-                                                animMode == "PULSE" -> baseCustomBorderColor.copy(alpha = pulseAlpha)
-                                                animMode == "GLOW" -> baseCustomBorderColor.copy(alpha = (pulseAlpha + 0.2f).coerceAtMost(1f))
-                                                else -> baseCustomBorderColor
-                                            }
-                                            val baseStrokeDp = if (isTransparentCustomBorder) {
-                                                if (isSelected) 1.dp else 0.dp
-                                            } else {
-                                                val rawDp = (strokePct / 10f).coerceIn(0.5f, 10f)
-                                                val animBoost = if (animMode == "GLOW") glowExtraDp else 0f
-                                                (rawDp + animBoost).dp
-                                            }
-
                                             val widgetBgBitmap = remember(comp.bgImagePath) {
                                                 if (comp.bgImagePath.isNotBlank()) {
                                                     val f = File(comp.bgImagePath)
@@ -1040,17 +1270,6 @@ fun InteractiveOverlayCanvas(
                                                 modifier = Modifier
                                                     .offset { IntOffset(offsetX.roundToInt(), offsetY.roundToInt()) }
                                                     .size(liveWidthDp.dp, liveHeightDp.dp)
-                                                    .then(
-                                                        if (baseStrokeDp > 0.dp) {
-                                                            Modifier.border(
-                                                                width = baseStrokeDp,
-                                                                color = resolvedBorderColor,
-                                                                shape = RoundedCornerShape(8.dp)
-                                                            )
-                                                        } else {
-                                                            Modifier
-                                                        }
-                                                    )
                                                     .clickable {
                                                         // Preview screen NEVER executes target files or opens links! Only selects widget for editing.
                                                         onSelectComponent(comp.id)
@@ -1074,7 +1293,20 @@ fun InteractiveOverlayCanvas(
                                                     }
                                                     .testTag("canvas_widget_${comp.id}")
                                             ) {
-                                                Box(modifier = Modifier.fillMaxSize()) {
+                                                Box(
+                                                    modifier = Modifier
+                                                        .fillMaxSize()
+                                                        .drawAnimatedWidgetCornerBorder(
+                                                            borderColorHex = comp.borderColorHex,
+                                                            borderStrokePercent = comp.borderStrokePercent,
+                                                            borderAnimation = comp.borderAnimation,
+                                                            cornerRadiusDp = 8f,
+                                                            rgbSweepAngleDeg = rgbSweepAngle,
+                                                            pulseProgress = pulseAlpha,
+                                                            blinkProgress = blinkProgress,
+                                                            isSelectedFallback = isSelected
+                                                        )
+                                                ) {
                                                     if (widgetBgBitmap != null) {
                                                         Image(
                                                             bitmap = widgetBgBitmap,
