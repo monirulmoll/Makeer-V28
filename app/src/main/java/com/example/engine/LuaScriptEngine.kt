@@ -64,7 +64,12 @@ object LuaScriptEngine {
 
     fun defaultButtonLogicForWidget(label: String, type: String, linkUrl: String = ""): String {
         val cleanToastText = stripLeadingEmojiForToast(label).replace("\"", "\\\"")
-        return "gg.toast(\"$cleanToastText\")"
+        return "gg.toast(\"$cleanToastText ON\")"
+    }
+
+    fun defaultOffLogicForWidget(label: String, type: String): String {
+        val cleanToastText = stripLeadingEmojiForToast(label).replace("\"", "\\\"")
+        return "gg.toast(\"$cleanToastText OFF\")"
     }
 
     fun resolveWidgetButtonLogic(component: CanvasComponentEntity): String {
@@ -82,6 +87,23 @@ object LuaScriptEngine {
         }
     }
 
+    fun resolveWidgetOffLogic(component: CanvasComponentEntity): String {
+        val rawOff = component.offPayloadHex.trim()
+        val isLegacyOff = rawOff.isEmpty() ||
+            rawOff.equals("Off", ignoreCase = true) ||
+            rawOff.equals("0x00", ignoreCase = true) ||
+            rawOff.startsWith("/data/") ||
+            rawOff.startsWith("/storage/")
+        if (!isLegacyOff) {
+            return rawOff
+        }
+        val onLogic = resolveWidgetButtonLogic(component)
+        if (onLogic.contains("if state") || onLogic.contains("if not state")) {
+            return onLogic
+        }
+        return defaultOffLogicForWidget(component.label, component.type)
+    }
+
     fun generateLuaScript(
         project: StudioProjectEntity,
         components: List<CanvasComponentEntity>
@@ -95,13 +117,25 @@ object LuaScriptEngine {
             appendLine()
             appendLine("local running = true")
             appendLine("local hidden = false")
+            if (luaWidgets.isNotEmpty()) {
+                appendLine()
+                luaWidgets.forEachIndexed { index, comp ->
+                    val initOn = comp.currentValue == "1" || comp.currentValue.equals("true", ignoreCase = true)
+                    appendLine("local switch_${index + 1} = { state = ${if (initOn) "true" else "false"} }")
+                }
+            }
             appendLine()
             appendLine("local function panel()")
             appendLine("    if not running then return end")
             appendLine()
             appendLine("    local c = gg.choice({")
-            luaWidgets.forEach { comp ->
-                appendLine("        \"${escapeLuaString(comp.label)}\",")
+            luaWidgets.forEachIndexed { index, comp ->
+                val escapedLabel = escapeLuaString(comp.label)
+                if (comp.type == ComponentWidgetType.TEXT.name) {
+                    appendLine("        \"$escapedLabel\",")
+                } else {
+                    appendLine("        (switch_${index + 1}.state and \"[ 🟢 ON ]  \" or \"[ ⚪ OFF ] \") .. \"$escapedLabel\",")
+                }
             }
             appendLine("        \"➖  MINIMIZE\",")
             appendLine("        \"🙈  HIDE\",")
@@ -118,9 +152,25 @@ object LuaScriptEngine {
                     val choiceIdx = index + 1
                     val keyword = if (index == 0) "if" else "elseif"
                     appendLine("    $keyword c == $choiceIdx then")
-                    val logicLines = resolveWidgetButtonLogic(comp).lines()
-                    logicLines.forEach { line ->
-                        appendLine("        $line")
+                    if (comp.type == ComponentWidgetType.TEXT.name) {
+                        val logicLines = resolveWidgetButtonLogic(comp).lines()
+                        logicLines.forEach { line ->
+                            appendLine("        $line")
+                        }
+                    } else {
+                        appendLine("        switch_$choiceIdx.state = not switch_$choiceIdx.state")
+                        appendLine("        local state = switch_$choiceIdx.state")
+                        val onLines = resolveWidgetButtonLogic(comp).lines()
+                        val offLines = resolveWidgetOffLogic(comp).lines()
+                        appendLine("        if state then")
+                        onLines.forEach { line ->
+                            appendLine("            $line")
+                        }
+                        appendLine("        else")
+                        offLines.forEach { line ->
+                            appendLine("            $line")
+                        }
+                        appendLine("        end")
                     }
                 }
                 appendLine("    elseif c == $minIdx then")
@@ -166,6 +216,20 @@ object LuaScriptEngine {
         value: Int,
         text: String
     ): LuaExecutionResult {
+        return executeOverlayLuaLogic(label, type, rawLogic, null, linkUrl, state, value, text)
+    }
+
+    @JvmStatic
+    fun executeOverlayLuaLogic(
+        label: String,
+        type: String,
+        rawLogic: String?,
+        rawOffLogic: String?,
+        linkUrl: String?,
+        state: Boolean,
+        value: Int,
+        text: String
+    ): LuaExecutionResult {
         val tempComp = CanvasComponentEntity(
             projectId = 0L,
             type = type,
@@ -182,7 +246,7 @@ object LuaScriptEngine {
             targetFilePath = "",
             byteOffsetHex = "0x00",
             onPayloadHex = rawLogic.orEmpty(),
-            offPayloadHex = "",
+            offPayloadHex = rawOffLogic.orEmpty(),
             sliderMax = 100,
             currentValue = text,
             linkUrl = linkUrl.orEmpty()
@@ -196,7 +260,13 @@ object LuaScriptEngine {
         value: Int,
         text: String
     ): LuaExecutionResult {
-        val logic = resolveWidgetButtonLogic(component)
+        val isSwitchOrButton = component.type == ComponentWidgetType.TOGGLE.name ||
+            component.type == ComponentWidgetType.BUTTON.name
+        val logic = if (isSwitchOrButton && !state) {
+            resolveWidgetOffLogic(component)
+        } else {
+            resolveWidgetButtonLogic(component)
+        }
         val logs = mutableListOf<String>()
         var lastToast: String? = null
         var lastAlert: String? = null

@@ -984,7 +984,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 it.label.equals(customPrefix, ignoreCase = true) ||
                     it.label.startsWith("$customPrefix #", ignoreCase = true)
             }
-            if (samePrefixCount == 0) customPrefix else "$customPrefix #${samePrefixCount + 1}"
+            if (customPrefix.equals("Switch", ignoreCase = true)) {
+                "Switch #${samePrefixCount + 1}"
+            } else if (samePrefixCount == 0) {
+                customPrefix
+            } else {
+                "$customPrefix #${samePrefixCount + 1}"
+            }
         } else {
             "$customPrefix #${existingCount + 1}"
         }
@@ -996,6 +1002,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 LuaScriptEngine.defaultButtonLogicForWidget(defaultLabel, widgetType.name, defaultLink)
             } else {
                 if (isNonExecutableWidget) "" else "On"
+            }
+            val defaultOffPayload = if (isLua) {
+                if (isNonExecutableWidget) "" else LuaScriptEngine.defaultOffLogicForWidget(defaultLabel, widgetType.name)
+            } else {
+                if (isNonExecutableWidget) "" else "Off"
             }
             val entity = CanvasComponentEntity(
                 projectId = project.id,
@@ -1015,7 +1026,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 targetFilePath = if (isLua || isNonExecutableWidget) "" else project.defaultTargetFilePath,
                 byteOffsetHex = defaultOffset,
                 onPayloadHex = defaultOnPayload,
-                offPayloadHex = if (isLua || isNonExecutableWidget) "" else "Off",
+                offPayloadHex = defaultOffPayload,
                 sliderMax = 100,
                 currentValue = if (widgetType == ComponentWidgetType.SLIDER) "0" else "0",
                 linkUrl = defaultLink,
@@ -2601,7 +2612,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     type = comp.type,
                     linkUrl = comp.linkUrl
                 )
-                studioDao.updateComponent(comp.copy(onPayloadHex = defaultLogic))
+                val defaultOffLogic = LuaScriptEngine.defaultOffLogicForWidget(
+                    label = comp.label,
+                    type = comp.type
+                )
+                studioDao.updateComponent(
+                    comp.copy(
+                        onPayloadHex = defaultLogic,
+                        offPayloadHex = defaultOffLogic
+                    )
+                )
             }
             syncOverlayRegistryInBackground(project)
             _uiState.update {

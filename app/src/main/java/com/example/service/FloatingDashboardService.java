@@ -734,49 +734,13 @@ extends Service {
         TextView headerTitleTv = new TextView((Context)this);
         headerTitleTv.setText((CharSequence)formattedHeader);
         headerTitleTv.setTextColor(Color.parseColor((String)"#F1F5F9"));
-        headerTitleTv.setTextSize(2, 12.0f);
+        headerTitleTv.setTextSize(2, 11.0f);
         headerTitleTv.setTypeface(Typeface.MONOSPACE, Typeface.BOLD);
         headerTitleTv.setSingleLine(true);
         headerTitleTv.setEllipsize(TextUtils.TruncateAt.END);
         LinearLayout.LayoutParams titleLp = new LinearLayout.LayoutParams(0, -2, 1.0f);
-        titleLp.leftMargin = this.dpToPx(8);
+        titleLp.leftMargin = this.dpToPx(6);
         titleLp.rightMargin = this.dpToPx(6);
-
-        TextView closeIconBtn = new TextView((Context)this);
-        closeIconBtn.setText((CharSequence)"\u2715");
-        closeIconBtn.setTextColor(Color.parseColor((String)"#FCA5A5"));
-        closeIconBtn.setTextSize(2, 12.0f);
-        closeIconBtn.setTypeface(Typeface.DEFAULT_BOLD);
-        closeIconBtn.setGravity(17);
-        closeIconBtn.setPadding(this.dpToPx(6), this.dpToPx(2), this.dpToPx(6), this.dpToPx(2));
-        closeIconBtn.setOnClickListener(v -> {
-            FloatingDashboardService.this.removeSystemOverlayWindow();
-            running = false;
-            FloatingDashboardService.this.stopSelf();
-        });
-
-        topHeader.addView((View)sxBadge);
-        topHeader.addView((View)headerTitleTv, (ViewGroup.LayoutParams)titleLp);
-        topHeader.addView((View)closeIconBtn);
-
-        // Scrollable choice rows
-        ScrollView choiceScroll = new ScrollView((Context)this);
-        LinearLayout choiceList = new LinearLayout((Context)this);
-        choiceList.setOrientation(1);
-
-        final int totalOptions = specs.size() + 3;
-        final int[] selectedIndex = new int[]{-1};
-        final TextView[] radioIndicators = new TextView[totalOptions];
-
-        Runnable refreshRadioSelection = () -> {
-            for (int idx = 0; idx < totalOptions; idx++) {
-                TextView radio = radioIndicators[idx];
-                if (radio == null) continue;
-                boolean isSel = selectedIndex[0] == idx;
-                radio.setText((CharSequence)(isSel ? "\u25c9" : "\u25ef"));
-                radio.setTextColor(isSel ? Color.parseColor((String)"#A855F7") : Color.parseColor((String)"#94A3B8"));
-            }
-        };
 
         // Minimized Sx floating button (gg.showUiButton())
         final TextView sxFloatingBtn = new TextView((Context)this);
@@ -794,6 +758,7 @@ extends Service {
 
         final Runnable minimizeToSxButton = () -> {
             dialogCard.setVisibility(8);
+            sxFloatingBtn.setAlpha(1.0f);
             sxFloatingBtn.setVisibility(0);
             if (this.overlayLayoutParams != null && this.floatingRootView != null && this.windowManager != null) {
                 this.overlayLayoutParams.width = sxBubbleW;
@@ -802,64 +767,180 @@ extends Service {
             }
         };
 
-        final Runnable executeChoiceAtIndex = () -> {
-            int sel = selectedIndex[0];
-            if (sel < 0) return;
-            if (sel < specs.size()) {
-                DynamicOverlayRegistry.OverlayItemSpec chosen = specs.get(sel);
-                this.executeFloatingLuaAction(chosen, true, 1, chosen.currentValue != null ? chosen.currentValue : "1");
-            } else if (sel == specs.size() || sel == specs.size() + 1) {
-                // MINIMIZE or HIDE -> collapse to Sx UI button
-                minimizeToSxButton.run();
-            } else if (sel == specs.size() + 2) {
-                // KILL -> os.exit()
-                Toast.makeText((Context)this, (CharSequence)"Script terminated (os.exit)", (int)0).show();
-                this.removeSystemOverlayWindow();
-                running = false;
-                this.stopSelf();
+        final Runnable hideToSxButton = () -> {
+            dialogCard.setVisibility(8);
+            sxFloatingBtn.setAlpha(0.55f);
+            sxFloatingBtn.setVisibility(0);
+            if (this.overlayLayoutParams != null && this.floatingRootView != null && this.windowManager != null) {
+                this.overlayLayoutParams.width = sxBubbleW;
+                this.overlayLayoutParams.height = sxBubbleH;
+                this.windowManager.updateViewLayout(this.floatingRootView, (ViewGroup.LayoutParams)this.overlayLayoutParams);
+            }
+            Toast.makeText((Context)this, (CharSequence)"Floating Panel Hidden (Tap Sx to show)", (int)0).show();
+        };
+
+        final Runnable killLuaPanel = () -> {
+            Toast.makeText((Context)this, (CharSequence)"Script terminated (os.exit)", (int)0).show();
+            this.removeSystemOverlayWindow();
+            running = false;
+            try {
+                this.stopForeground(true);
+            } catch (Throwable ignored) {
+            }
+            this.stopSelf();
+        };
+
+        // Top-Right Header Controls: [Minimize] [Hide] [Kill]
+        TextView minHeaderBtn = new TextView((Context)this);
+        minHeaderBtn.setText((CharSequence)"Minimize");
+        minHeaderBtn.setTextColor(-1);
+        minHeaderBtn.setTextSize(2, 8.5f);
+        minHeaderBtn.setTypeface(Typeface.DEFAULT_BOLD);
+        minHeaderBtn.setGravity(17);
+        minHeaderBtn.setPadding(this.dpToPx(5), this.dpToPx(3), this.dpToPx(5), this.dpToPx(3));
+        GradientDrawable minHeaderBg = new GradientDrawable();
+        minHeaderBg.setColor(Color.parseColor((String)"#374151"));
+        minHeaderBg.setCornerRadius((float)this.dpToPx(5));
+        minHeaderBg.setStroke(this.dpToPx(1), Color.parseColor((String)"#9CA3AF"));
+        minHeaderBtn.setBackground((Drawable)minHeaderBg);
+        LinearLayout.LayoutParams minHeaderLp = new LinearLayout.LayoutParams(-2, -2);
+        minHeaderLp.rightMargin = this.dpToPx(4);
+        minHeaderBtn.setOnClickListener(v -> minimizeToSxButton.run());
+
+        TextView hideHeaderBtn = new TextView((Context)this);
+        hideHeaderBtn.setText((CharSequence)"Hide");
+        hideHeaderBtn.setTextColor(Color.parseColor((String)"#BAE6FD"));
+        hideHeaderBtn.setTextSize(2, 8.5f);
+        hideHeaderBtn.setTypeface(Typeface.DEFAULT_BOLD);
+        hideHeaderBtn.setGravity(17);
+        hideHeaderBtn.setPadding(this.dpToPx(5), this.dpToPx(3), this.dpToPx(5), this.dpToPx(3));
+        GradientDrawable hideHeaderBg = new GradientDrawable();
+        hideHeaderBg.setColor(Color.parseColor((String)"#1E293B"));
+        hideHeaderBg.setCornerRadius((float)this.dpToPx(5));
+        hideHeaderBg.setStroke(this.dpToPx(1), Color.parseColor((String)"#38BDF8"));
+        hideHeaderBtn.setBackground((Drawable)hideHeaderBg);
+        LinearLayout.LayoutParams hideHeaderLp = new LinearLayout.LayoutParams(-2, -2);
+        hideHeaderLp.rightMargin = this.dpToPx(4);
+        hideHeaderBtn.setOnClickListener(v -> hideToSxButton.run());
+
+        TextView killHeaderBtn = new TextView((Context)this);
+        killHeaderBtn.setText((CharSequence)"Kill");
+        killHeaderBtn.setTextColor(-1);
+        killHeaderBtn.setTextSize(2, 8.5f);
+        killHeaderBtn.setTypeface(Typeface.DEFAULT_BOLD);
+        killHeaderBtn.setGravity(17);
+        killHeaderBtn.setPadding(this.dpToPx(5), this.dpToPx(3), this.dpToPx(5), this.dpToPx(3));
+        GradientDrawable killHeaderBg = new GradientDrawable();
+        killHeaderBg.setColor(Color.parseColor((String)"#EF4444"));
+        killHeaderBg.setCornerRadius((float)this.dpToPx(5));
+        killHeaderBg.setStroke(this.dpToPx(1), Color.parseColor((String)"#FCA5A5"));
+        killHeaderBtn.setBackground((Drawable)killHeaderBg);
+        killHeaderBtn.setOnClickListener(v -> killLuaPanel.run());
+
+        topHeader.addView((View)sxBadge);
+        topHeader.addView((View)headerTitleTv, (ViewGroup.LayoutParams)titleLp);
+        topHeader.addView((View)minHeaderBtn, (ViewGroup.LayoutParams)minHeaderLp);
+        topHeader.addView((View)hideHeaderBtn, (ViewGroup.LayoutParams)hideHeaderLp);
+        topHeader.addView((View)killHeaderBtn);
+
+        // Scrollable user widget rows (Header controls are NOT included in widget count!)
+        ScrollView choiceScroll = new ScrollView((Context)this);
+        LinearLayout choiceList = new LinearLayout((Context)this);
+        choiceList.setOrientation(1);
+
+        final int totalWidgets = specs.size();
+        final boolean[] widgetStates = new boolean[totalWidgets];
+        final TextView[] statePillViews = new TextView[totalWidgets];
+        final TextView[] toggleBadgeViews = new TextView[totalWidgets];
+
+        for (int idx = 0; idx < totalWidgets; idx++) {
+            DynamicOverlayRegistry.OverlayItemSpec s = specs.get(idx);
+            String cv = s != null && s.currentValue != null ? s.currentValue.trim() : "0";
+            widgetStates[idx] = "1".equals(cv) || "true".equalsIgnoreCase(cv);
+        }
+
+        final Runnable refreshAllToggleVisuals = () -> {
+            for (int idx = 0; idx < totalWidgets; idx++) {
+                boolean isOn = widgetStates[idx];
+                TextView pill = statePillViews[idx];
+                if (pill != null) {
+                    pill.setText((CharSequence)(isOn ? "\ud83d\udfe2 ON" : "\u26aa OFF"));
+                    pill.setTextColor(isOn ? Color.parseColor((String)"#6EE7B7") : Color.parseColor((String)"#9CA3AF"));
+                    GradientDrawable pillBg = new GradientDrawable();
+                    pillBg.setColor(isOn ? Color.parseColor((String)"#065F46") : Color.parseColor((String)"#1F2937"));
+                    pillBg.setCornerRadius((float)this.dpToPx(5));
+                    pillBg.setStroke(this.dpToPx(1), isOn ? Color.parseColor((String)"#10B981") : Color.parseColor((String)"#4B5563"));
+                    pill.setBackground((Drawable)pillBg);
+                }
+                TextView rightToggle = toggleBadgeViews[idx];
+                if (rightToggle != null) {
+                    rightToggle.setText((CharSequence)(isOn ? "ON" : "OFF"));
+                    rightToggle.setTextColor(-1);
+                    GradientDrawable rtBg = new GradientDrawable();
+                    rtBg.setColor(isOn ? Color.parseColor((String)"#10B981") : Color.parseColor((String)"#374151"));
+                    rtBg.setCornerRadius((float)this.dpToPx(99));
+                    rtBg.setStroke(this.dpToPx(1), isOn ? Color.parseColor((String)"#6EE7B7") : Color.parseColor((String)"#6B7280"));
+                    rightToggle.setBackground((Drawable)rtBg);
+                }
             }
         };
 
-        for (int i = 0; i < totalOptions; i++) {
+        for (int i = 0; i < totalWidgets; i++) {
             final int rowIdx = i;
-            String labelText;
-            if (i < specs.size()) {
-                labelText = specs.get(i).label != null ? specs.get(i).label : ("Option " + (i + 1));
-            } else if (i == specs.size()) {
-                labelText = "\u2796  MINIMIZE";
-            } else if (i == specs.size() + 1) {
-                labelText = "\ud83d\ude48  HIDE";
-            } else {
-                labelText = "\u274c  KILL";
-            }
+            final DynamicOverlayRegistry.OverlayItemSpec specItem = specs.get(i);
+            final boolean isTextWidget = specItem != null && "TEXT".equalsIgnoreCase(specItem.type);
+            String labelText = specItem != null && specItem.label != null ? specItem.label : ("Widget #" + (i + 1));
 
             LinearLayout row = new LinearLayout((Context)this);
             row.setOrientation(0);
             row.setGravity(16);
-            row.setPadding(this.dpToPx(12), this.dpToPx(9), this.dpToPx(12), this.dpToPx(9));
+            row.setPadding(this.dpToPx(10), this.dpToPx(9), this.dpToPx(10), this.dpToPx(9));
 
-            TextView radioTv = new TextView((Context)this);
-            radioTv.setText((CharSequence)"\u25ef");
-            radioTv.setTextSize(2, 15.0f);
-            radioTv.setTextColor(Color.parseColor((String)"#94A3B8"));
-            radioIndicators[i] = radioTv;
+            if (!isTextWidget) {
+                TextView statePillTv = new TextView((Context)this);
+                statePillTv.setTextSize(2, 10.0f);
+                statePillTv.setTypeface(Typeface.MONOSPACE, Typeface.BOLD);
+                statePillTv.setSingleLine(true);
+                statePillTv.setPadding(this.dpToPx(7), this.dpToPx(3), this.dpToPx(7), this.dpToPx(3));
+                statePillViews[i] = statePillTv;
+                row.addView((View)statePillTv);
+            }
 
             TextView itemTv = new TextView((Context)this);
             itemTv.setText((CharSequence)labelText);
             itemTv.setTextColor(Color.parseColor((String)"#F8FAFC"));
             itemTv.setTextSize(2, 13.0f);
+            itemTv.setTypeface(Typeface.DEFAULT_BOLD);
             itemTv.setSingleLine(true);
             itemTv.setEllipsize(TextUtils.TruncateAt.END);
             LinearLayout.LayoutParams itemLp = new LinearLayout.LayoutParams(0, -2, 1.0f);
-            itemLp.leftMargin = this.dpToPx(10);
-
-            row.addView((View)radioTv);
+            itemLp.leftMargin = this.dpToPx(isTextWidget ? 2 : 10);
+            itemLp.rightMargin = this.dpToPx(6);
             row.addView((View)itemTv, (ViewGroup.LayoutParams)itemLp);
 
+            if (!isTextWidget) {
+                TextView rightToggleTv = new TextView((Context)this);
+                rightToggleTv.setTextSize(2, 9.5f);
+                rightToggleTv.setTypeface(Typeface.DEFAULT_BOLD);
+                rightToggleTv.setSingleLine(true);
+                rightToggleTv.setPadding(this.dpToPx(8), this.dpToPx(2), this.dpToPx(8), this.dpToPx(2));
+                toggleBadgeViews[i] = rightToggleTv;
+                row.addView((View)rightToggleTv);
+            }
+
             row.setOnClickListener(v -> {
-                selectedIndex[0] = rowIdx;
-                refreshRadioSelection.run();
-                executeChoiceAtIndex.run();
+                if (isTextWidget) return;
+                boolean nextState = !widgetStates[rowIdx];
+                widgetStates[rowIdx] = nextState;
+                if (specItem != null) {
+                    specItem.currentValue = nextState ? "1" : "0";
+                    DynamicOverlayRegistry.OverlayItemSpec regSpec = DynamicOverlayRegistry.getSpecById(specItem.id, specItem);
+                    if (regSpec != null) {
+                        regSpec.currentValue = specItem.currentValue;
+                    }
+                    refreshAllToggleVisuals.run();
+                    this.executeFloatingLuaAction(specItem, nextState, nextState ? 1 : 0, specItem.currentValue);
+                }
             });
 
             choiceList.addView((View)row, (ViewGroup.LayoutParams)new LinearLayout.LayoutParams(-1, -2));
@@ -868,6 +949,8 @@ extends Service {
             divider.setBackgroundColor(Color.parseColor((String)"#3E4451"));
             choiceList.addView(divider, (ViewGroup.LayoutParams)new LinearLayout.LayoutParams(-1, Math.max(1, this.dpToPx(1))));
         }
+
+        refreshAllToggleVisuals.run();
 
         choiceScroll.addView((View)choiceList, (ViewGroup.LayoutParams)new FrameLayout.LayoutParams(-1, -2));
 
@@ -895,7 +978,7 @@ extends Service {
         okBtn.setTextSize(2, 11.5f);
         okBtn.setTypeface(Typeface.DEFAULT_BOLD);
         okBtn.setPadding(this.dpToPx(12), this.dpToPx(4), this.dpToPx(10), this.dpToPx(4));
-        okBtn.setOnClickListener(v -> executeChoiceAtIndex.run());
+        okBtn.setOnClickListener(v -> minimizeToSxButton.run());
 
         footer.addView((View)cancelBtn);
         footer.addView((View)okBtn);
@@ -967,6 +1050,7 @@ extends Service {
                     }
                     case 1: {
                         if (!this.wasDragged) {
+                            sxFloatingBtn.setAlpha(1.0f);
                             sxFloatingBtn.setVisibility(8);
                             dialogCard.setVisibility(0);
                             if (FloatingDashboardService.this.overlayLayoutParams != null && FloatingDashboardService.this.floatingRootView != null && FloatingDashboardService.this.windowManager != null) {
@@ -1747,6 +1831,7 @@ extends Service {
                     spec.label != null ? spec.label : "Widget",
                     spec.type != null ? spec.type : "BUTTON",
                     spec.onPayloadHex,
+                    spec.offPayloadHex,
                     spec.linkUrl,
                     state,
                     val,
