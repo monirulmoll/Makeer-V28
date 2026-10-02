@@ -35,6 +35,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.CreateNewFolder
 import androidx.compose.material.icons.filled.Delete
@@ -218,6 +219,8 @@ private fun resolveDocumentUriToStoragePath(uri: Uri, fallback: String): String 
 @Composable
 fun PropertyInspectorBottomDock(
     component: CanvasComponentEntity,
+    isLuaScriptMode: Boolean = false,
+    onSetDefaultForAllWidgets: () -> Unit = {},
     hasStoragePermission: Boolean = true,
     isAutoFixSize: Boolean = true,
     onToggleAutoFixSize: () -> Unit = {},
@@ -234,6 +237,8 @@ fun PropertyInspectorBottomDock(
 ) {
     ComponentPropertyInspectorSheet(
         component = component,
+        isLuaScriptMode = isLuaScriptMode,
+        onSetDefaultForAllWidgets = onSetDefaultForAllWidgets,
         isAutoFixSize = isAutoFixSize,
         onToggleAutoFixSize = onToggleAutoFixSize,
         onPickImageUri = onPickImageUri,
@@ -253,6 +258,8 @@ fun PropertyInspectorBottomDock(
 @Composable
 fun ComponentPropertyInspectorSheet(
     component: CanvasComponentEntity,
+    isLuaScriptMode: Boolean = false,
+    onSetDefaultForAllWidgets: () -> Unit = {},
     isAutoFixSize: Boolean = true,
     onToggleAutoFixSize: () -> Unit = {},
     onPickImageUri: (Uri) -> Unit = {},
@@ -290,7 +297,15 @@ fun ComponentPropertyInspectorSheet(
     var widthDp by remember(component.id, component.widthDp) { mutableStateOf(component.widthDp.toString()) }
     var heightDp by remember(component.id, component.heightDp) { mutableStateOf(component.heightDp.toString()) }
     var byteOffset by remember(component.id) { mutableStateOf(component.byteOffsetHex) }
-    var onPayload by remember(component.id) { mutableStateOf(component.onPayloadHex) }
+    var onPayload by remember(component.id, component.onPayloadHex, isLuaScriptMode) {
+        mutableStateOf(
+            if (isLuaScriptMode) {
+                com.example.engine.LuaScriptEngine.resolveWidgetButtonLogic(component)
+            } else {
+                component.onPayloadHex
+            }
+        )
+    }
     var offPayload by remember(component.id) { mutableStateOf(component.offPayloadHex) }
     var bgHex by remember(component.id) { mutableStateOf(component.bgColorHex) }
     var textHex by remember(component.id) { mutableStateOf(component.textColorHex) }
@@ -1122,9 +1137,172 @@ fun ComponentPropertyInspectorSheet(
                             }
                         }
 
-                        // EXECUTABLE WIDGETS ONLY (SWITCH, BUTTON, SLIDER 0-100, EDIT TEXT):
+                        // LUA SCRIPT MODE ONLY: Edit Button Logic + Set Default + Set Default For Every Button Logic (No File Replace/Copy!)
+                        if (isLuaScriptMode && !isTextViewWidget) {
+                            Column(
+                                verticalArrangement = Arrangement.spacedBy(8.dp),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(Color(0xFF09152B))
+                                    .border(BorderStroke(1.dp, Color(0xFF10B981).copy(alpha = 0.55f)), RoundedCornerShape(12.dp))
+                                    .padding(10.dp)
+                            ) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Row(
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Code,
+                                            contentDescription = "Edit Button Logic",
+                                            tint = Color(0xFF34D399),
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                        Text(
+                                            text = "Edit Button Logic",
+                                            color = Color.White,
+                                            fontSize = 12.sp,
+                                            fontWeight = FontWeight.ExtraBold
+                                        )
+                                    }
+
+                                    Row(
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Surface(
+                                            shape = RoundedCornerShape(8.dp),
+                                            color = Color(0xFF10B981).copy(alpha = 0.22f),
+                                            border = BorderStroke(1.dp, Color(0xFF10B981)),
+                                            modifier = Modifier
+                                                .clickable {
+                                                    val defLogic = com.example.engine.LuaScriptEngine.defaultButtonLogicForWidget(
+                                                        label = label.ifBlank { component.label },
+                                                        type = component.type,
+                                                        linkUrl = linkUrl
+                                                    )
+                                                    onPayload = defLogic
+                                                    onSaveComponent(buildUpdated().copy(onPayloadHex = defLogic))
+                                                }
+                                                .testTag("inspector_set_default_button_logic")
+                                        ) {
+                                            Text(
+                                                text = "Set Default",
+                                                color = Color(0xFF6EE7B7),
+                                                fontSize = 10.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                            )
+                                        }
+
+                                        Surface(
+                                            shape = RoundedCornerShape(8.dp),
+                                            color = InspectorPurpleButton.copy(alpha = 0.35f),
+                                            border = BorderStroke(1.dp, Color(0xFF60A5FA)),
+                                            modifier = Modifier
+                                                .clickable {
+                                                    val defLogic = com.example.engine.LuaScriptEngine.defaultButtonLogicForWidget(
+                                                        label = label.ifBlank { component.label },
+                                                        type = component.type,
+                                                        linkUrl = linkUrl
+                                                    )
+                                                    onPayload = defLogic
+                                                    onSaveComponent(buildUpdated().copy(onPayloadHex = defLogic))
+                                                    onSetDefaultForAllWidgets()
+                                                }
+                                                .testTag("inspector_set_default_all_button_logic")
+                                        ) {
+                                            Text(
+                                                text = "Set Default (All)",
+                                                color = Color(0xFFBAE6FD),
+                                                fontSize = 10.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                            )
+                                        }
+                                    }
+                                }
+
+                                Text(
+                                    text = "Define what happens when this widget is clicked/toggled in Lua runtime:",
+                                    color = Color(0xFF94A3B8),
+                                    fontSize = 10.sp
+                                )
+
+                                OutlinedTextField(
+                                    value = onPayload,
+                                    onValueChange = {
+                                        onPayload = it
+                                        onSaveComponent(buildUpdated().copy(onPayloadHex = it))
+                                    },
+                                    placeholder = {
+                                        Text(
+                                            "print(\"Button clicked\")\ntoast(\"Executed!\")",
+                                            color = InspectorPlaceholderColor,
+                                            fontSize = 11.sp
+                                        )
+                                    },
+                                    minLines = 3,
+                                    maxLines = 6,
+                                    shape = RoundedCornerShape(10.dp),
+                                    colors = OutlinedTextFieldDefaults.colors(
+                                        focusedContainerColor = InspectorFieldBg,
+                                        unfocusedContainerColor = InspectorFieldBg,
+                                        focusedBorderColor = Color(0xFF10B981),
+                                        unfocusedBorderColor = InspectorFieldBorder,
+                                        focusedTextColor = Color(0xFFE2E8F0),
+                                        unfocusedTextColor = Color(0xFFE2E8F0)
+                                    ),
+                                    textStyle = androidx.compose.ui.text.TextStyle(
+                                        fontSize = 11.5.sp,
+                                        fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
+                                    ),
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .testTag("inspector_lua_button_logic_input")
+                                )
+
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = "Variables: label, state (ON/OFF), value, text",
+                                        color = Color(0xFF64748B),
+                                        fontSize = 9.5.sp
+                                    )
+                                    Surface(
+                                        shape = RoundedCornerShape(8.dp),
+                                        color = Color(0xFF059669),
+                                        modifier = Modifier
+                                            .clickable {
+                                                val updated = buildUpdated().copy(onPayloadHex = onPayload)
+                                                onSaveComponent(updated)
+                                                onTriggerLive(updated, onPayload)
+                                            }
+                                            .testTag("inspector_test_lua_button_logic")
+                                    ) {
+                                        Text(
+                                            text = "▶ Run Button Logic",
+                                            color = Color.White,
+                                            fontSize = 10.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
+                                        )
+                                    }
+                                }
+                            }
+                        }
+
+                        // EXECUTABLE WIDGETS ONLY (SWITCH, BUTTON, SLIDER 0-100, EDIT TEXT) in MTDP mode:
                         // Action Mode (Replace / Copy) + 2. Select your main file & 3. Target Path + Live Validation Error Box
-                        if (isExecutableFileWidget) {
+                        if (!isLuaScriptMode && isExecutableFileWidget) {
                             val isCopyActionMode = byteOffset.trim().equals("COPY", ignoreCase = true)
 
                             // Action Mode Selector: Replace vs Copy
@@ -1570,8 +1748,10 @@ fun ComponentPropertyInspectorSheet(
                             label = "inspectorBlink"
                         )
 
-                        // 0. Voice Section (Exclusively in Style tab)
-                        renderVoiceSection()
+                        // 0. Voice Section (Exclusively in Style tab for MTDP mode; removed in Lua Script mode)
+                        if (!isLuaScriptMode) {
+                            renderVoiceSection()
+                        }
 
                         // 0B. Widget Corner Border Line Customization (Exclusively in Style tab)
                         Column(

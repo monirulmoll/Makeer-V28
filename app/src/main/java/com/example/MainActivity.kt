@@ -107,6 +107,7 @@ import java.util.Locale
 import kotlin.math.roundToInt
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.data.CanvasComponentEntity
+import com.example.data.isLuaScriptProject
 import com.example.data.isScreen1WidgetType
 import com.example.engine.LocalConfigStateWriter
 import com.example.engine.ShizukuPrivilegeBridge
@@ -336,7 +337,9 @@ class MainActivity : ComponentActivity() {
                             onStopSystemOverlay = viewModel::stopSystemFloatingOverlay,
                             onRefreshPermissions = viewModel::refreshOverlayPermission,
                             onRequestOrLaunchShizuku = viewModel::requestOrLaunchShizuku,
-                            onTestAllTargetPaths = viewModel::testAllActiveTargetPathsNow
+                            onTestAllTargetPaths = viewModel::testAllActiveTargetPathsNow,
+                            onSetDefaultForAllWidgets = viewModel::setDefaultButtonLogicForAllWidgets,
+                            onClearLuaRuntimeLogs = viewModel::clearLuaRuntimeLogs
                         )
                     }
                 }
@@ -390,10 +393,14 @@ fun StudioCanvasBuilderScreen(
     onStopSystemOverlay: () -> Unit,
     onRefreshPermissions: () -> Unit = {},
     onRequestOrLaunchShizuku: () -> Unit = {},
-    onTestAllTargetPaths: () -> Unit = {}
+    onTestAllTargetPaths: () -> Unit = {},
+    onSetDefaultForAllWidgets: () -> Unit = {},
+    onClearLuaRuntimeLogs: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val project = uiState.activeProject ?: return
+    val isLuaScriptMode = project.isLuaScriptProject()
+    val effectivePreviewScreen = if (isLuaScriptMode) 2 else uiState.activePreviewScreen
     val selectedComponent = remember(components, uiState.selectedComponentId) {
         components.find { it.id == uiState.selectedComponentId }
     }
@@ -1324,7 +1331,7 @@ fun StudioCanvasBuilderScreen(
             onDismissRequest = onDismissDownloadDialog,
             title = {
                 Text(
-                    text = "Compiled '${project.name}' APK Ready",
+                    text = if (isLuaScriptMode) "Saved '${project.name}' Lua Script" else "Compiled '${project.name}' APK Ready",
                     fontWeight = FontWeight.Bold
                 )
             },
@@ -1346,7 +1353,7 @@ fun StudioCanvasBuilderScreen(
                     }
                     if (uiState.rawJavaBuildPreview.isNotBlank()) {
                         Text(
-                            text = "Compiled Kotlin Widget Code (${components.size} widget(s)):",
+                            text = if (isLuaScriptMode) "Generated Lua Script (${uiState.downloadedFileName}):" else "Compiled Kotlin Widget Code (${components.size} widget(s)):",
                             style = MaterialTheme.typography.labelSmall,
                             fontWeight = FontWeight.Bold,
                             color = Color(0xFF0F172A)
@@ -1372,61 +1379,83 @@ fun StudioCanvasBuilderScreen(
                             }
                         }
                     }
-                    Column(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
+                    if (isLuaScriptMode) {
                         Button(
-                            onClick = onInstallCompiledApk,
-                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF00C853)),
+                            onClick = {
+                                onDismissDownloadDialog()
+                                onLaunchSystemOverlay()
+                            },
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF059669)),
                             shape = RoundedCornerShape(8.dp),
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .testTag("install_compiled_apk_button")
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.InstallMobile,
-                                contentDescription = "Install Compiled APK",
-                                modifier = Modifier.size(16.dp)
-                            )
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text("Install '${project.name}' APK", fontWeight = FontWeight.Bold)
-                        }
-
-                        Button(
-                            onClick = onRunCompiledAppPreview,
-                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2563EB)),
-                            shape = RoundedCornerShape(8.dp),
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .testTag("run_compiled_app_button")
+                                .testTag("run_saved_lua_script_button")
                         ) {
                             Icon(
                                 imageVector = Icons.Default.PlayArrow,
-                                contentDescription = "Run Compiled App",
+                                contentDescription = "Run Lua",
                                 modifier = Modifier.size(16.dp)
                             )
                             Spacer(modifier = Modifier.width(6.dp))
-                            Text("Run Compiled '${project.name}' App", fontWeight = FontWeight.Bold)
+                            Text("Run Lua Script", fontWeight = FontWeight.Bold)
                         }
-
-                        Button(
-                            onClick = {
-                                createDocumentLauncher.launch(uiState.downloadedFileName)
-                            },
-                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF334155)),
-                            shape = RoundedCornerShape(8.dp),
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .testTag("save_compiled_apk_folder_button")
+                    } else {
+                        Column(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
-                            Icon(
-                                imageVector = Icons.Default.Download,
-                                contentDescription = "Save APK to Custom Folder",
-                                modifier = Modifier.size(16.dp)
-                            )
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text("Save APK to Folder...", fontWeight = FontWeight.Bold)
+                            Button(
+                                onClick = onInstallCompiledApk,
+                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF00C853)),
+                                shape = RoundedCornerShape(8.dp),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .testTag("install_compiled_apk_button")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.InstallMobile,
+                                    contentDescription = "Install Compiled APK",
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("Install '${project.name}' APK", fontWeight = FontWeight.Bold)
+                            }
+
+                            Button(
+                                onClick = onRunCompiledAppPreview,
+                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF2563EB)),
+                                shape = RoundedCornerShape(8.dp),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .testTag("run_compiled_app_button")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.PlayArrow,
+                                    contentDescription = "Run Compiled App",
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("Run Compiled '${project.name}' App", fontWeight = FontWeight.Bold)
+                            }
+
+                            Button(
+                                onClick = {
+                                    createDocumentLauncher.launch(uiState.downloadedFileName)
+                                },
+                                colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF334155)),
+                                shape = RoundedCornerShape(8.dp),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .testTag("save_compiled_apk_folder_button")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Download,
+                                    contentDescription = "Save APK to Custom Folder",
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("Save APK to Folder...", fontWeight = FontWeight.Bold)
+                            }
                         }
                     }
                 }
@@ -1529,7 +1558,11 @@ fun StudioCanvasBuilderScreen(
                                     overflow = TextOverflow.Ellipsis
                                 )
                                 Text(
-                                    text = "App Studio • ${project.canvasWidthDp}×${project.canvasHeightDp} dp • ${components.size} widgets",
+                                    text = if (isLuaScriptMode) {
+                                        "Lua Script • ${project.canvasWidthDp}×${project.canvasHeightDp} dp • ${components.size} widgets"
+                                    } else {
+                                        "App Studio • ${project.canvasWidthDp}×${project.canvasHeightDp} dp • ${components.size} widgets"
+                                    },
                                     style = MaterialTheme.typography.labelSmall,
                                     color = Color(0xFF7B93B8),
                                     maxLines = 1,
@@ -1552,26 +1585,32 @@ fun StudioCanvasBuilderScreen(
                                 .testTag("download_floating_window_button")
                         ) {
                             Icon(
-                                imageVector = Icons.Default.Build,
-                                contentDescription = "Build APK from Raw Java",
+                                imageVector = if (isLuaScriptMode) Icons.Default.Save else Icons.Default.Build,
+                                contentDescription = if (isLuaScriptMode) "Save Lua" else "Build APK from Raw Java",
                                 modifier = Modifier.size(15.dp)
                             )
                             Spacer(modifier = Modifier.width(4.dp))
                             Text(
-                                text = "Build",
+                                text = if (isLuaScriptMode) "Save Lua" else "Build",
                                 fontSize = 11.sp,
                                 fontWeight = FontWeight.Bold
                             )
                         }
 
+                        val isLuaOrOverlayRunning = if (isLuaScriptMode) {
+                            uiState.isLivePreviewMode || uiState.isSystemOverlayRunning
+                        } else {
+                            uiState.isSystemOverlayRunning
+                        }
+
                         Button(
                             onClick = {
-                                if (uiState.isSystemOverlayRunning) onStopSystemOverlay()
+                                if (isLuaOrOverlayRunning) onStopSystemOverlay()
                                 else onLaunchSystemOverlay()
                             },
                             shape = RoundedCornerShape(10.dp),
                             colors = ButtonDefaults.buttonColors(
-                                containerColor = if (uiState.isSystemOverlayRunning)
+                                containerColor = if (isLuaOrOverlayRunning)
                                     Color(0xFFEF4444)
                                 else Color(0xFF5B4DFF)
                             ),
@@ -1581,13 +1620,17 @@ fun StudioCanvasBuilderScreen(
                                 .testTag("run_floating_overlay_button")
                         ) {
                             Icon(
-                                imageVector = if (uiState.isSystemOverlayRunning) Icons.Default.Stop else Icons.Default.Layers,
-                                contentDescription = "Launch Floating Overlay",
+                                imageVector = if (isLuaOrOverlayRunning) Icons.Default.Stop else if (isLuaScriptMode) Icons.Default.PlayArrow else Icons.Default.Layers,
+                                contentDescription = if (isLuaScriptMode) "Run Lua" else "Launch Floating Overlay",
                                 modifier = Modifier.size(16.dp)
                             )
                             Spacer(modifier = Modifier.width(4.dp))
                             Text(
-                                text = if (uiState.isSystemOverlayRunning) "Stop" else "Float",
+                                text = if (isLuaScriptMode) {
+                                    if (isLuaOrOverlayRunning) "Stop Lua" else "Run Lua"
+                                } else {
+                                    if (uiState.isSystemOverlayRunning) "Stop" else "Float"
+                                },
                                 fontSize = 11.sp,
                                 fontWeight = FontWeight.Bold
                             )
@@ -1815,8 +1858,8 @@ fun StudioCanvasBuilderScreen(
                     }
                 }
 
-                val activeScreenComponents = remember(components, uiState.activePreviewScreen) {
-                    if (uiState.activePreviewScreen == 1) {
+                val activeScreenComponents = remember(components, effectivePreviewScreen) {
+                    if (effectivePreviewScreen == 1) {
                         components.filter { isScreen1WidgetType(it.type) }
                     } else {
                         components.filter { !isScreen1WidgetType(it.type) }
@@ -1850,6 +1893,8 @@ fun StudioCanvasBuilderScreen(
                     if (selectedComponent != null) {
                         PropertyInspectorBottomDock(
                             component = selectedComponent,
+                            isLuaScriptMode = isLuaScriptMode,
+                            onSetDefaultForAllWidgets = onSetDefaultForAllWidgets,
                             hasStoragePermission = uiState.hasStoragePermission,
                             isAutoFixSize = project.autoFixSize,
                             onToggleAutoFixSize = onToggleAutoFixSize,
@@ -1867,10 +1912,84 @@ fun StudioCanvasBuilderScreen(
                     }
                 }
 
-                // Bottom Select Preview Screen bar (Screen 1 vs Screen 2)
-                // Hidden automatically when typing on keyboard, in Full Screen Preview, OR when editing a widget's function/properties
+                // Lua Runtime Output Console Strip when running Lua Script
                 AnimatedVisibility(
-                    visible = !isPreviewFullScreen && selectedComponent == null && !isKeyboardVisible && !isEditingAnyDialog,
+                    visible = isLuaScriptMode && (uiState.isLivePreviewMode || uiState.luaRuntimeLogs.isNotEmpty()) && selectedComponent == null,
+                    enter = slideInVertically(initialOffsetY = { it }),
+                    exit = slideOutVertically(targetOffsetY = { it })
+                ) {
+                    Surface(
+                        color = Color(0xFF071318),
+                        border = BorderStroke(1.dp, Color(0xFF10B981).copy(alpha = 0.45f)),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .navigationBarsPadding()
+                            .testTag("lua_runtime_console_bar")
+                    ) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 12.dp, vertical = 8.dp),
+                            verticalArrangement = Arrangement.spacedBy(4.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(8.dp)
+                                            .clip(CircleShape)
+                                            .background(if (uiState.isLivePreviewMode) Color(0xFF10B981) else Color(0xFF38BDF8))
+                                    )
+                                    Text(
+                                        text = if (uiState.isLivePreviewMode) "Lua Runtime Active — Tap widgets to execute button logic" else "Lua Runtime Output",
+                                        color = Color(0xFF6EE7B7),
+                                        fontSize = 11.sp,
+                                        fontWeight = FontWeight.ExtraBold
+                                    )
+                                }
+                                if (uiState.luaRuntimeLogs.isNotEmpty()) {
+                                    Text(
+                                        text = "Clear",
+                                        color = Color(0xFF94A3B8),
+                                        fontSize = 10.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        modifier = Modifier.clickable { onClearLuaRuntimeLogs() }
+                                    )
+                                }
+                            }
+                            if (uiState.luaRuntimeLogs.isNotEmpty()) {
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .heightIn(max = 72.dp)
+                                        .verticalScroll(rememberScrollState()),
+                                    verticalArrangement = Arrangement.spacedBy(2.dp)
+                                ) {
+                                    uiState.luaRuntimeLogs.takeLast(6).forEach { logLine ->
+                                        Text(
+                                            text = "> $logLine",
+                                            color = Color(0xFFE2E8F0),
+                                            fontSize = 10.5.sp,
+                                            fontFamily = FontFamily.Monospace
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Bottom Select Preview Screen bar (Screen 1 vs Screen 2)
+                // Do NOT show Preview Screen 1 in Lua mode!
+                AnimatedVisibility(
+                    visible = !isLuaScriptMode && !isPreviewFullScreen && selectedComponent == null && !isKeyboardVisible && !isEditingAnyDialog,
                     enter = slideInVertically(initialOffsetY = { it }),
                     exit = slideOutVertically(targetOffsetY = { it })
                 ) {
@@ -1980,7 +2099,7 @@ fun StudioCanvasBuilderScreen(
                 selectedComponentId = uiState.selectedComponentId,
                 isLivePreviewMode = uiState.isLivePreviewMode,
                 statusToast = uiState.statusToast,
-                activePreviewScreen = uiState.activePreviewScreen,
+                activePreviewScreen = effectivePreviewScreen,
                 isPreviewFullScreen = isPreviewFullScreen,
                 onTogglePreviewFullScreen = { isPreviewFullScreen = !isPreviewFullScreen },
                 onAddPaletteEntry = onAddPaletteEntry,

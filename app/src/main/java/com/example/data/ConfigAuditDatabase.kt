@@ -37,6 +37,11 @@ fun isScreen1WidgetType(type: String?): Boolean {
     return type != null && type.trim().uppercase().startsWith("S1_")
 }
 
+fun StudioProjectEntity.isLuaScriptProject(): Boolean {
+    return defaultTargetFilePath.trim().endsWith(".lua", ignoreCase = true) ||
+        packageName.trim().startsWith("lua.script", ignoreCase = true)
+}
+
 @Entity(tableName = "studio_projects")
 data class StudioProjectEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,

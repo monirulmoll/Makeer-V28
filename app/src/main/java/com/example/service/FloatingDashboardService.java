@@ -107,6 +107,8 @@ import com.example.MainActivity;
 import com.example.R;
 import com.example.engine.ConfigParameterSpec;
 import com.example.engine.LocalConfigStateWriter;
+import com.example.engine.LuaExecutionResult;
+import com.example.engine.LuaScriptEngine;
 import com.example.engine.ShizukuPrivilegeBridge;
 import com.example.engine.SoundTriggerPlayer;
 import com.example.service.DynamicOverlayRegistry;
@@ -1088,21 +1090,25 @@ extends Service {
                         SoundTriggerPlayer.playSoundTrigger((Context)this, (View)btn, latest.offSoundTrigger, latest.offCustomSoundPath);
                     }
                     final String payload = isChecked ? latest.onPayloadHex : latest.offPayloadHex;
-                    new Thread(() -> {
-                        LocalConfigStateWriter.getInstance().executeFloatingWidgetPatchSync(
-                                this.getFilesDir(),
-                                "widget_" + latest.id,
-                                "TOGGLE",
-                                latest.targetFilePath,
-                                latest.byteOffsetHex,
-                                latest.offPayloadHex,
-                                latest.onPayloadHex,
-                                payload,
-                                isChecked,
-                                latest.label,
-                                latest.customImagePath
-                        );
-                    }).start();
+                    if (latest.isLuaScript) {
+                        this.executeFloatingLuaAction(latest, isChecked, isChecked ? 1 : 0, isChecked ? "1" : "0");
+                    } else {
+                        new Thread(() -> {
+                            LocalConfigStateWriter.getInstance().executeFloatingWidgetPatchSync(
+                                    this.getFilesDir(),
+                                    "widget_" + latest.id,
+                                    "TOGGLE",
+                                    latest.targetFilePath,
+                                    latest.byteOffsetHex,
+                                    latest.offPayloadHex,
+                                    latest.onPayloadHex,
+                                    payload,
+                                    isChecked,
+                                    latest.label,
+                                    latest.customImagePath
+                            );
+                        }).start();
+                    }
                 });
                 View.OnClickListener rowClick = v -> toggleSwitch.setChecked(!toggleSwitch.isChecked());
                 onOffBadge.setOnClickListener(rowClick);
@@ -1161,19 +1167,23 @@ extends Service {
                         } else {
                             SoundTriggerPlayer.playSoundTrigger((Context)FloatingDashboardService.this, (View)sb, latest.soundTrigger, latest.customSoundPath);
                         }
-                        new Thread(() -> LocalConfigStateWriter.getInstance().executeFloatingWidgetPatchSync(
-                                FloatingDashboardService.this.getFilesDir(),
-                                "widget_" + latest.id,
-                                "SLIDER",
-                                latest.targetFilePath,
-                                latest.byteOffsetHex,
-                                latest.offPayloadHex,
-                                latest.onPayloadHex,
-                                String.valueOf(progress),
-                                progress > 0,
-                                latest.label,
-                                latest.customImagePath
-                        )).start();
+                        if (latest.isLuaScript) {
+                            FloatingDashboardService.this.executeFloatingLuaAction(latest, progress > 0, progress, String.valueOf(progress));
+                        } else {
+                            new Thread(() -> LocalConfigStateWriter.getInstance().executeFloatingWidgetPatchSync(
+                                    FloatingDashboardService.this.getFilesDir(),
+                                    "widget_" + latest.id,
+                                    "SLIDER",
+                                    latest.targetFilePath,
+                                    latest.byteOffsetHex,
+                                    latest.offPayloadHex,
+                                    latest.onPayloadHex,
+                                    String.valueOf(progress),
+                                    progress > 0,
+                                    latest.label,
+                                    latest.customImagePath
+                            )).start();
+                        }
                     }
                 });
                 box.addView((View)labelTv);
@@ -1203,19 +1213,28 @@ extends Service {
                     } else {
                         SoundTriggerPlayer.playSoundTrigger((Context)this, (View)v, spec.soundTrigger, spec.customSoundPath);
                     }
-                    new Thread(() -> LocalConfigStateWriter.getInstance().executeFloatingWidgetPatchSync(
-                            this.getFilesDir(),
-                            "widget_" + spec.id,
-                            "INPUT",
-                            spec.targetFilePath,
-                            spec.byteOffsetHex,
-                            spec.offPayloadHex,
-                            spec.onPayloadHex,
-                            val,
-                            !isOff,
-                            spec.label,
-                            spec.customImagePath
-                    )).start();
+                    if (spec.isLuaScript) {
+                        int numVal = 0;
+                        try {
+                            numVal = Integer.parseInt(val.trim());
+                        } catch (Exception ignored) {
+                        }
+                        this.executeFloatingLuaAction(spec, !isOff, numVal, val);
+                    } else {
+                        new Thread(() -> LocalConfigStateWriter.getInstance().executeFloatingWidgetPatchSync(
+                                this.getFilesDir(),
+                                "widget_" + spec.id,
+                                "INPUT",
+                                spec.targetFilePath,
+                                spec.byteOffsetHex,
+                                spec.offPayloadHex,
+                                spec.onPayloadHex,
+                                val,
+                                !isOff,
+                                spec.label,
+                                spec.customImagePath
+                        )).start();
+                    }
                     this.setOverlayFocusable(false);
                     return true;
                 });
@@ -1349,27 +1368,60 @@ extends Service {
                 SoundTriggerPlayer.playSoundTrigger((Context)this, (View)btnRow, latest.offSoundTrigger, latest.offCustomSoundPath);
             }
             final String payload = nextOn ? latest.onPayloadHex : latest.offPayloadHex;
-            new Thread(() -> {
-                LocalConfigStateWriter.getInstance().executeFloatingWidgetPatchSync(
-                        this.getFilesDir(),
-                        "widget_" + latest.id,
-                        "BUTTON",
-                        latest.targetFilePath,
-                        latest.byteOffsetHex,
-                        latest.offPayloadHex,
-                        latest.onPayloadHex,
-                        payload,
-                        nextOn,
-                        latest.label,
-                        latest.customImagePath
-                );
-            }).start();
+            if (latest.isLuaScript) {
+                this.executeFloatingLuaAction(latest, nextOn, nextOn ? 1 : 0, nextOn ? "1" : "0");
+            } else {
+                new Thread(() -> {
+                    LocalConfigStateWriter.getInstance().executeFloatingWidgetPatchSync(
+                            this.getFilesDir(),
+                            "widget_" + latest.id,
+                            "BUTTON",
+                            latest.targetFilePath,
+                            latest.byteOffsetHex,
+                            latest.offPayloadHex,
+                            latest.onPayloadHex,
+                            payload,
+                            nextOn,
+                            latest.label,
+                            latest.customImagePath
+                    );
+                }).start();
+            }
         };
         btnRow.setOnClickListener(clickListener);
         pillBadge.setOnClickListener(clickListener);
         btnRow.addView((View)labelTv, (ViewGroup.LayoutParams)labelLp);
         btnRow.addView((View)pillBadge, (ViewGroup.LayoutParams)pillLp);
         return btnRow;
+    }
+
+    private void executeFloatingLuaAction(DynamicOverlayRegistry.OverlayItemSpec spec, boolean state, int val, String text) {
+        if (spec == null) return;
+        try {
+            LuaExecutionResult res = LuaScriptEngine.executeOverlayLuaLogic(
+                    spec.label != null ? spec.label : "Widget",
+                    spec.type != null ? spec.type : "BUTTON",
+                    spec.onPayloadHex,
+                    spec.linkUrl,
+                    state,
+                    val,
+                    text != null ? text : ""
+            );
+            if (res.getOpenedUrl() != null && !res.getOpenedUrl().trim().isEmpty()) {
+                this.openLinkUrl(res.getOpenedUrl().trim());
+            }
+            String msg = res.getToastMessage();
+            if (msg == null || msg.trim().isEmpty()) {
+                msg = res.getAlertMessage();
+            }
+            if ((msg == null || msg.trim().isEmpty()) && res.getLogs() != null && !res.getLogs().isEmpty()) {
+                msg = res.getLogs().get(res.getLogs().size() - 1);
+            }
+            if (msg != null && !msg.trim().isEmpty()) {
+                Toast.makeText((Context)this, (CharSequence)msg, (int)0).show();
+            }
+        } catch (Throwable ignored) {
+        }
     }
 
     private void openLinkUrl(String rawUrl) {

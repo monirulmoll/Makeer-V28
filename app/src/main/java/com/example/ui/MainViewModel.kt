@@ -19,6 +19,7 @@ import com.example.data.ComponentWidgetType
 import com.example.data.ConfigAuditRepository
 import com.example.data.ConfigWriteAuditEntity
 import com.example.data.StudioProjectEntity
+import com.example.data.isLuaScriptProject
 import com.example.data.isScreen1WidgetType
 import com.example.engine.AiBuildStepStatus
 import com.example.engine.AiChatTurn
@@ -26,6 +27,7 @@ import com.example.engine.ConfigParameterSpec
 import com.example.engine.GgufBlueprintEngine
 import com.example.engine.GgufModelState
 import com.example.engine.LocalConfigStateWriter
+import com.example.engine.LuaScriptEngine
 import com.example.engine.ShizukuPrivilegeBridge
 import com.example.engine.SoundTriggerPlayer
 import com.example.engine.StudioGenerationMode
@@ -117,6 +119,7 @@ data class StudioUiState(
     val isShizukuRunning: Boolean = false,
     val isShizukuInstalled: Boolean = false,
     val activeWriteErrorReport: LocalConfigStateWriter.WriteDiagnosticReport? = null,
+    val luaRuntimeLogs: List<String> = emptyList(),
     val statusToast: String = "Welcome to Studio Error — Choose Offline Mode or Online (AI) Mode."
 )
 
@@ -698,15 +701,22 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val inserted = studioDao.getProjectById(newId) ?: newProject.copy(id = newId)
             exportProjectToErrorStudioFolder(inserted, emptyList())
             activeProjectIdFlow.value = newId
+            val isLua = inserted.isLuaScriptProject()
             _uiState.update {
                 it.copy(
                     destination = StudioDestination.CANVAS_WORKSPACE,
                     activeProject = inserted,
+                    activePreviewScreen = if (isLua) 2 else it.activePreviewScreen,
                     selectedComponentId = null,
                     isLivePreviewMode = false,
                     showCreateProjectDialog = false,
                     showExistingProjectsPicker = false,
-                    statusToast = "Project saved in Download/ERROR STUDIO — 100% Empty Workspace ready."
+                    luaRuntimeLogs = emptyList(),
+                    statusToast = if (isLua) {
+                        "Lua Script '${inserted.name}' ready — Add widgets, edit button logic, Save Lua (Download/lua/) or Run Lua!"
+                    } else {
+                        "Project saved in Download/ERROR STUDIO — 100% Empty Workspace ready."
+                    }
                 )
             }
         }
@@ -717,14 +727,21 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
      */
     fun openExistingProject(project: StudioProjectEntity) {
         activeProjectIdFlow.value = project.id
+        val isLua = project.isLuaScriptProject()
         _uiState.update {
             it.copy(
                 destination = StudioDestination.CANVAS_WORKSPACE,
                 activeProject = project,
+                activePreviewScreen = if (isLua) 2 else it.activePreviewScreen,
                 selectedComponentId = null,
                 isLivePreviewMode = false,
                 showExistingProjectsPicker = false,
-                statusToast = "Loaded project '${project.name}'."
+                luaRuntimeLogs = emptyList(),
+                statusToast = if (isLua) {
+                    "Loaded Lua Script '${project.name}'."
+                } else {
+                    "Loaded project '${project.name}'."
+                }
             )
         }
     }
@@ -964,7 +981,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val defaultLabel = "$customPrefix #${existingCount + 1}"
 
         viewModelScope.launch {
+            val isLua = project.isLuaScriptProject()
             val isNonExecutableWidget = widgetType == ComponentWidgetType.TEXT || widgetType == ComponentWidgetType.LINK
+            val defaultLink = if (widgetType == ComponentWidgetType.LINK) "https://google.com" else ""
+            val defaultOnPayload = if (isLua) {
+                LuaScriptEngine.defaultButtonLogicForWidget(defaultLabel, widgetType.name, defaultLink)
+            } else {
+                if (isNonExecutableWidget) "" else "On"
+            }
             val entity = CanvasComponentEntity(
                 projectId = project.id,
                 type = widgetType.name,
@@ -976,17 +1000,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 bgColorHex = customBgHex ?: defaultBg,
                 textColorHex = resolvedTextHex,
                 customImagePath = "",
-                soundTrigger = SoundTriggerPlayer.SOUND_VOICE_ON,
+                soundTrigger = if (isLua) "NONE" else SoundTriggerPlayer.SOUND_VOICE_ON,
                 customSoundPath = "",
-                offSoundTrigger = SoundTriggerPlayer.SOUND_VOICE_OFF,
+                offSoundTrigger = if (isLua) "NONE" else SoundTriggerPlayer.SOUND_VOICE_OFF,
                 offCustomSoundPath = "",
-                targetFilePath = if (isNonExecutableWidget) "" else project.defaultTargetFilePath,
+                targetFilePath = if (isLua || isNonExecutableWidget) "" else project.defaultTargetFilePath,
                 byteOffsetHex = defaultOffset,
-                onPayloadHex = if (isNonExecutableWidget) "" else "On",
-                offPayloadHex = if (isNonExecutableWidget) "" else "Off",
+                onPayloadHex = defaultOnPayload,
+                offPayloadHex = if (isLua || isNonExecutableWidget) "" else "Off",
                 sliderMax = 100,
                 currentValue = if (widgetType == ComponentWidgetType.SLIDER) "0" else "0",
-                linkUrl = if (widgetType == ComponentWidgetType.LINK) "https://google.com" else "",
+                linkUrl = defaultLink,
                 borderColorHex = "#38BDF8",
                 borderStrokePercent = 20,
                 borderAnimation = "NONE"
@@ -1168,6 +1192,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 borderColorHex = comp.borderColorHex
                 borderStrokePercent = comp.borderStrokePercent
                 borderAnimation = comp.borderAnimation
+                isLuaScript = project.isLuaScriptProject()
             }
         }
         val effectiveSize = latestCanvasSizes[project.id] ?: (project.canvasWidthDp to project.canvasHeightDp)
@@ -1516,6 +1541,66 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
      * during Live Test Mode or from the Inspector Test button.
      */
     fun triggerComponentAction(component: CanvasComponentEntity, newValueOverride: String? = null) {
+        val activeProj = _uiState.value.activeProject
+        if (activeProj?.isLuaScriptProject() == true) {
+            val nextCurrentVal: String
+            val isTurningOn: Boolean
+            val numericVal: Int
+            when (component.type) {
+                ComponentWidgetType.TEXT.name -> return
+                ComponentWidgetType.SLIDER.name -> {
+                    nextCurrentVal = newValueOverride ?: component.currentValue
+                    numericVal = nextCurrentVal.toIntOrNull() ?: 0
+                    isTurningOn = numericVal > 0
+                }
+                ComponentWidgetType.INPUT.name -> {
+                    nextCurrentVal = newValueOverride ?: component.currentValue
+                    numericVal = nextCurrentVal.toIntOrNull() ?: 0
+                    isTurningOn = nextCurrentVal.isNotBlank() && nextCurrentVal != "0" && !nextCurrentVal.equals("false", ignoreCase = true)
+                }
+                else -> {
+                    val currentlyOn = component.currentValue == "1" || component.currentValue.equals("true", ignoreCase = true)
+                    val nextOn = if (newValueOverride != null) {
+                        newValueOverride == "1" || newValueOverride.equals("true", ignoreCase = true)
+                    } else {
+                        !currentlyOn
+                    }
+                    isTurningOn = nextOn
+                    nextCurrentVal = if (nextOn) "1" else "0"
+                    numericVal = if (nextOn) 1 else 0
+                }
+            }
+            val updatedComp = component.copy(currentValue = nextCurrentVal)
+            updateComponent(updatedComp)
+            val execResult = LuaScriptEngine.executeWidgetLuaLogic(
+                component = updatedComp,
+                state = isTurningOn,
+                value = numericVal,
+                text = nextCurrentVal
+            )
+            execResult.openedUrl?.takeIf { it.isNotBlank() }?.let { rawUrl ->
+                val formatted = if (rawUrl.startsWith("http://") || rawUrl.startsWith("https://")) rawUrl else "https://$rawUrl"
+                try {
+                    val intent = Intent(Intent.ACTION_VIEW, Uri.parse(formatted)).apply {
+                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    }
+                    appContext.startActivity(intent)
+                } catch (_: Exception) {
+                }
+            }
+            val summaryMsg = execResult.toastMessage
+                ?: execResult.alertMessage
+                ?: execResult.logs.lastOrNull()
+                ?: "Executed Lua logic for '${component.label}'"
+            _uiState.update { state ->
+                state.copy(
+                    luaRuntimeLogs = (state.luaRuntimeLogs + execResult.logs).takeLast(30),
+                    statusToast = "▶ Lua: $summaryMsg"
+                )
+            }
+            return
+        }
+
         val payloadToWrite: String
         val nextCurrentVal: String
         val isTurningOn: Boolean
@@ -1822,6 +1907,106 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun launchSystemFloatingOverlay() {
         val project = _uiState.value.activeProject ?: return
+        if (project.isLuaScriptProject()) {
+            val hasOverlay = Settings.canDrawOverlays(appContext)
+            if (!hasOverlay) {
+                try {
+                    appContext.stopService(Intent(appContext, FloatingDashboardService::class.java))
+                } catch (_: Exception) {
+                }
+                _uiState.update {
+                    it.copy(
+                        isSystemOverlayRunning = false,
+                        isLivePreviewMode = false,
+                        hasOverlayPermission = false,
+                        statusToast = "⚠️ Permission Required: Please grant Overlay Permission (SYSTEM_ALERT_WINDOW) to float the Lua panel."
+                    )
+                }
+                LocalConfigStateWriter.requestOverlayPermission(appContext)
+                return
+            }
+
+            val components = activeComponents.value
+            val specs = components.map { comp ->
+                DynamicOverlayRegistry.OverlayItemSpec().apply {
+                    id = comp.id
+                    type = comp.type
+                    label = comp.label
+                    posXDp = comp.posXDp
+                    posYDp = comp.posYDp
+                    widthDp = comp.widthDp
+                    heightDp = comp.heightDp
+                    bgColorHex = comp.bgColorHex
+                    textColorHex = comp.textColorHex
+                    bgImagePath = comp.bgImagePath
+                    customImagePath = comp.customImagePath
+                    soundTrigger = "NONE"
+                    customSoundPath = ""
+                    offSoundTrigger = "NONE"
+                    offCustomSoundPath = ""
+                    targetFilePath = ""
+                    byteOffsetHex = comp.byteOffsetHex
+                    onPayloadHex = comp.onPayloadHex
+                    offPayloadHex = comp.offPayloadHex
+                    sliderMax = comp.sliderMax
+                    currentValue = comp.currentValue
+                    linkUrl = comp.linkUrl
+                    borderColorHex = comp.borderColorHex
+                    borderStrokePercent = comp.borderStrokePercent
+                    borderAnimation = comp.borderAnimation
+                    isLuaScript = true
+                }
+            }
+            val effectiveSize = latestCanvasSizes[project.id] ?: (project.canvasWidthDp to project.canvasHeightDp)
+            DynamicOverlayRegistry.updateActiveOverlay(
+                project.overlayTitle.ifBlank { project.name },
+                project.floatingLogoPath.ifBlank { project.appLogoPath },
+                effectiveSize.first,
+                effectiveSize.second,
+                project.canvasBgColorHex,
+                project.canvasBgImagePath,
+                project.autoFixSize,
+                specs
+            )
+            try {
+                val intent = Intent(appContext, FloatingDashboardService::class.java).apply {
+                    action = FloatingDashboardService.ACTION_START_OVERLAY
+                }
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    appContext.startForegroundService(intent)
+                } else {
+                    appContext.startService(intent)
+                }
+                _uiState.update { state ->
+                    state.copy(
+                        isSystemOverlayRunning = true,
+                        isLivePreviewMode = true,
+                        selectedComponentId = null,
+                        statusToast = "▶ Lua Floating Panel launched (${specs.size} widgets)!"
+                    )
+                }
+            } catch (e: Exception) {
+                _uiState.update {
+                    it.copy(
+                        isSystemOverlayRunning = false,
+                        statusToast = "Could not launch Lua floating overlay: ${e.message}"
+                    )
+                }
+            }
+            viewModelScope.launch(Dispatchers.IO) {
+                try {
+                    val dbComps = studioDao.getComponentsForProjectSync(project.id).ifEmpty { components }
+                    val saveRes = LuaScriptEngine.saveLuaScriptToDownloads(appContext, project, dbComps)
+                    _uiState.update { state ->
+                        state.copy(
+                            luaRuntimeLogs = (state.luaRuntimeLogs + "▶ Floating ${saveRes.fileName} (${dbComps.size} widgets)").takeLast(30)
+                        )
+                    }
+                } catch (_: Exception) {
+                }
+            }
+            return
+        }
         val hasOverlay = Settings.canDrawOverlays(appContext)
         val hasStorage = hasStoragePermission()
 
@@ -2046,6 +2231,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
      */
     fun downloadFloatingWindowToAndroid(customKotlinFiles: Map<String, String>? = null) {
         val initialProject = _uiState.value.activeProject ?: return
+        if (initialProject.isLuaScriptProject()) {
+            saveActiveProjectLuaScript()
+            return
+        }
         viewModelScope.launch {
             try {
                 // Always read the latest project and visual components from Room DB / active visual state.
@@ -2351,6 +2540,70 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 statusToast = "Returned to Studio Error Editor for '${it.activeProject?.name ?: "Project"}'."
             )
         }
+    }
+
+    fun saveActiveProjectLuaScript() {
+        val initialProject = _uiState.value.activeProject ?: return
+        viewModelScope.launch {
+            try {
+                val project = studioDao.getProjectById(initialProject.id) ?: initialProject
+                val components = withContext(Dispatchers.IO) {
+                    studioDao.getComponentsForProjectSync(project.id).ifEmpty { activeComponents.value }
+                }
+                val saveResult = withContext(Dispatchers.IO) {
+                    LuaScriptEngine.saveLuaScriptToDownloads(appContext, project, components)
+                }
+                val sizeKb = String.format(Locale.US, "%.1f KB", (saveResult.sizeBytes / 1024.0).coerceAtLeast(0.1))
+                _uiState.update {
+                    it.copy(
+                        isBuildingApk = false,
+                        buildProgressStepText = "",
+                        rawJavaBuildPreview = saveResult.scriptContent,
+                        downloadedFileName = saveResult.fileName,
+                        downloadedFileSummary = buildString {
+                            appendLine("Lua Script Saved: ${saveResult.fileName}")
+                            appendLine("Panel Title: ${project.overlayTitle.ifBlank { project.name }}")
+                            appendLine("Widgets Mapped: ${components.count { !isScreen1WidgetType(it.type) }} Lua widget(s)")
+                            appendLine("Script Size: $sizeKb")
+                            append("Saved to: ${saveResult.publicDisplayPath}")
+                        },
+                        statusToast = "✅ Saved Lua Script to ${saveResult.publicDisplayPath}"
+                    )
+                }
+            } catch (e: Exception) {
+                _uiState.update {
+                    it.copy(statusToast = "Could not save Lua script: ${e.message}")
+                }
+            }
+        }
+    }
+
+    fun setDefaultButtonLogicForAllWidgets() {
+        val project = _uiState.value.activeProject ?: return
+        viewModelScope.launch {
+            val list = withContext(Dispatchers.IO) {
+                studioDao.getComponentsForProjectSync(project.id)
+            }
+            for (comp in list) {
+                if (isScreen1WidgetType(comp.type)) continue
+                val defaultLogic = LuaScriptEngine.defaultButtonLogicForWidget(
+                    label = comp.label,
+                    type = comp.type,
+                    linkUrl = comp.linkUrl
+                )
+                studioDao.updateComponent(comp.copy(onPayloadHex = defaultLogic))
+            }
+            syncOverlayRegistryInBackground(project)
+            _uiState.update {
+                it.copy(
+                    statusToast = "✅ Set Default Button Logic for all ${list.count { !isScreen1WidgetType(it.type) }} widget(s)!"
+                )
+            }
+        }
+    }
+
+    fun clearLuaRuntimeLogs() {
+        _uiState.update { it.copy(luaRuntimeLogs = emptyList()) }
     }
 
     fun saveFloatingWindowToCustomUri(destUri: Uri) {

@@ -82,6 +82,8 @@ public class DynamicOverlayRegistry {
                     existing.borderColorHex = incoming.borderColorHex;
                     existing.borderStrokePercent = incoming.borderStrokePercent;
                     existing.borderAnimation = incoming.borderAnimation;
+                    existing.parentWidgetIdsCsv = incoming.parentWidgetIdsCsv;
+                    existing.isLuaScript = incoming.isLuaScript;
                 }
             }
         }
@@ -289,5 +291,7 @@ public class DynamicOverlayRegistry {
         public String borderColorHex = "#38BDF8";
         public int borderStrokePercent = 25;
         public String borderAnimation = "NONE";
+        public String parentWidgetIdsCsv = "";
+        public boolean isLuaScript = false;
     }
 }

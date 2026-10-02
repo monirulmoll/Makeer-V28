@@ -41,6 +41,7 @@ import androidx.compose.material.icons.automirrored.filled.MenuBook
 import androidx.compose.material.icons.automirrored.filled.OpenInNew
 import androidx.compose.material.icons.filled.AccountTree
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Android
 import androidx.compose.material.icons.filled.Apps
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Check
@@ -217,6 +218,11 @@ fun StudioProjectLauncherScreen(
         onSyncErrorStudioFolder = onSyncErrorStudioFolder,
         onImportProjectUri = onImportProjectUri,
         onCreateProjectWithLogo = { name, pkg, overlayTitle, logoPath ->
+            val resolvedTargetPath = if (pkg.trim().startsWith("lua.script", ignoreCase = true)) {
+                com.example.engine.LuaScriptEngine.defaultLuaPathForProject(name)
+            } else {
+                defaultPathProvider(name)
+            }
             onCreateProject(
                 name,
                 pkg,
@@ -224,7 +230,7 @@ fun StudioProjectLauncherScreen(
                 overlayTitle,
                 216,
                 290,
-                defaultPathProvider(name),
+                resolvedTargetPath,
                 logoPath,
                 1,
                 "1.0",
@@ -436,6 +442,7 @@ fun LauncherScreen(
 ) {
     val context = LocalContext.current
     var currentSubScreen by remember { mutableStateOf(initialSubScreen) }
+    var initialCreateMode by remember { mutableStateOf("MTDP") }
     var showImportUrlDialog by remember { mutableStateOf<String?>(null) }
     var importRepoInput by remember { mutableStateOf("") }
 
@@ -555,7 +562,10 @@ fun LauncherScreen(
                             LocalConfigStateWriter.requestOverlayPermission(context)
                         },
                         onOpenCreateNewHub = { currentSubScreen = AppStudioSubScreen.CREATE_NEW_HUB },
-                        onOpenCreateNewAppForm = { currentSubScreen = AppStudioSubScreen.CREATE_NEW_APP },
+                        onOpenCreateNewAppForm = {
+                            initialCreateMode = "MTDP"
+                            currentSubScreen = AppStudioSubScreen.CREATE_NEW_APP
+                        },
                         onOpenAiMode = onOpenAiStudio,
                         onOpenSavedProjects = { currentSubScreen = AppStudioSubScreen.SAVED_PROJECTS },
                         onOpenImportProject = { currentSubScreen = AppStudioSubScreen.IMPORT_PROJECT },
@@ -573,7 +583,14 @@ fun LauncherScreen(
                 AppStudioSubScreen.CREATE_NEW_HUB -> {
                     CreateNewHubScreenContent(
                         onClose = { currentSubScreen = AppStudioSubScreen.HOME },
-                        onSelectCreateNewApp = { currentSubScreen = AppStudioSubScreen.CREATE_NEW_APP },
+                        onSelectCreateNewApp = {
+                            initialCreateMode = "MTDP"
+                            currentSubScreen = AppStudioSubScreen.CREATE_NEW_APP
+                        },
+                        onSelectCreateLuaScript = {
+                            initialCreateMode = "LUA_SCRIPT"
+                            currentSubScreen = AppStudioSubScreen.CREATE_NEW_APP
+                        },
                         onSelectUseTemplate = { currentSubScreen = AppStudioSubScreen.TEMPLATES },
                         onSelectImportProject = { currentSubScreen = AppStudioSubScreen.IMPORT_PROJECT },
                         onSelectAiMode = onOpenAiStudio,
@@ -583,6 +600,7 @@ fun LauncherScreen(
 
                 AppStudioSubScreen.CREATE_NEW_APP -> {
                     CreateNewAppWizardScreenContent(
+                        initialCreateMode = initialCreateMode,
                         hasStoragePermission = hasStoragePermission,
                         hasOverlayPermission = hasOverlayPermission,
                         onRequestStoragePermission = {
@@ -1423,6 +1441,7 @@ private fun StarterProjectListCard(
 private fun CreateNewHubScreenContent(
     onClose: () -> Unit,
     onSelectCreateNewApp: () -> Unit,
+    onSelectCreateLuaScript: () -> Unit = {},
     onSelectUseTemplate: () -> Unit,
     onSelectImportProject: () -> Unit,
     onSelectAiMode: () -> Unit,
@@ -1473,6 +1492,15 @@ private fun CreateNewHubScreenContent(
             iconBgColor = Color(0xFF2563EB),
             onClick = onSelectCreateNewApp,
             testTag = "hub_create_new_app_card"
+        )
+
+        HubOptionCard(
+            title = "Lua Script",
+            subtitle = "Create and run a .lua script with custom button logic (Saved in Download/lua/)",
+            icon = Icons.Default.Code,
+            iconBgColor = Color(0xFF10B981),
+            onClick = onSelectCreateLuaScript,
+            testTag = "hub_create_lua_script_card"
         )
 
         HubOptionCard(
@@ -1599,6 +1627,7 @@ private fun HubOptionCard(
  */
 @Composable
 private fun CreateNewAppWizardScreenContent(
+    initialCreateMode: String = "MTDP",
     hasStoragePermission: Boolean = true,
     hasOverlayPermission: Boolean = true,
     onRequestStoragePermission: () -> Unit = {},
@@ -1607,6 +1636,8 @@ private fun CreateNewAppWizardScreenContent(
     onImportLogoUri: (Uri, (String) -> Unit) -> Unit,
     onCreateApp: (String, String, String, String) -> Unit
 ) {
+    var createMode by remember(initialCreateMode) { mutableStateOf(initialCreateMode) }
+    val isLuaMode = createMode == "LUA_SCRIPT"
     var appName by remember { mutableStateOf("") }
     var packageName by remember { mutableStateOf("") }
     var selectedLogoPath by remember { mutableStateOf("") }
@@ -1673,6 +1704,110 @@ private fun CreateNewAppWizardScreenContent(
                 .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
+            // Mode Selector: MTDP vs Lua Script
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    text = "Select Project Mode",
+                    color = Color.White,
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = if (!isLuaMode) StudioIndigoPrimary.copy(alpha = 0.22f) else StudioCardBg,
+                        border = BorderStroke(
+                            width = if (!isLuaMode) 1.5.dp else 1.dp,
+                            color = if (!isLuaMode) StudioIndigoAccent else StudioCardBorder
+                        ),
+                        modifier = Modifier
+                            .weight(1f)
+                            .clickable {
+                                createMode = "MTDP"
+                                if (packageName.startsWith("lua.script.")) {
+                                    val slug = appName.lowercase().replace(Regex("[^a-z0-9]"), "")
+                                    packageName = if (slug.isNotEmpty()) "com.example.$slug" else ""
+                                }
+                            }
+                            .testTag("create_mode_mtdp_option")
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Android,
+                                contentDescription = "MTDP",
+                                tint = if (!isLuaMode) Color(0xFF818CF8) else StudioTextSecondary,
+                                modifier = Modifier.size(20.dp)
+                            )
+                            Column {
+                                Text(
+                                    text = "MTDP",
+                                    color = Color.White,
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Text(
+                                    text = "App / APK Builder",
+                                    color = StudioTextSecondary,
+                                    fontSize = 10.sp
+                                )
+                            }
+                        }
+                    }
+
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = if (isLuaMode) Color(0xFF064E3B).copy(alpha = 0.45f) else StudioCardBg,
+                        border = BorderStroke(
+                            width = if (isLuaMode) 1.5.dp else 1.dp,
+                            color = if (isLuaMode) Color(0xFF10B981) else StudioCardBorder
+                        ),
+                        modifier = Modifier
+                            .weight(1f)
+                            .clickable {
+                                createMode = "LUA_SCRIPT"
+                                val slug = appName.lowercase().replace(Regex("[^a-z0-9]"), "").ifEmpty { "myscript" }
+                                if (packageName.isBlank() || packageName.startsWith("com.example.")) {
+                                    packageName = "lua.script.$slug"
+                                }
+                            }
+                            .testTag("create_mode_lua_script_option")
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Code,
+                                contentDescription = "Lua Script",
+                                tint = if (isLuaMode) Color(0xFF34D399) else StudioTextSecondary,
+                                modifier = Modifier.size(20.dp)
+                            )
+                            Column {
+                                Text(
+                                    text = "Lua Script",
+                                    color = Color.White,
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Text(
+                                    text = "Create & Run .lua",
+                                    color = StudioTextSecondary,
+                                    fontSize = 10.sp
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
             Text(
                 text = "1. Basic Information",
                 color = Color.White,
@@ -1680,47 +1815,63 @@ private fun CreateNewAppWizardScreenContent(
                 fontWeight = FontWeight.Bold
             )
 
-            // App Name *
+            // App Name / Script Name *
             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Row {
-                    Text("App Name ", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                    Text(
+                        if (isLuaMode) "Script Name " else "App Name ",
+                        color = Color.White,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.SemiBold
+                    )
                     Text("*", color = Color(0xFFEF4444), fontSize = 13.sp, fontWeight = FontWeight.Bold)
                 }
                 DarkStudioTextField(
                     value = appName,
                     onValueChange = {
                         appName = it
-                        if (packageName.isBlank() || packageName.startsWith("com.example.")) {
-                            val slug = it.lowercase().replace(Regex("[^a-z0-9]"), "")
-                            packageName = if (slug.isNotEmpty()) "com.example.$slug" else ""
+                        val slug = it.lowercase().replace(Regex("[^a-z0-9]"), "")
+                        if (isLuaMode) {
+                            if (packageName.isBlank() || packageName.startsWith("lua.script.") || packageName.startsWith("com.example.")) {
+                                packageName = if (slug.isNotEmpty()) "lua.script.$slug" else "lua.script.custom"
+                            }
+                        } else {
+                            if (packageName.isBlank() || packageName.startsWith("com.example.") || packageName.startsWith("lua.script.")) {
+                                packageName = if (slug.isNotEmpty()) "com.example.$slug" else ""
+                            }
                         }
                     },
                     label = "",
-                    placeholder = "Enter your app name",
+                    placeholder = if (isLuaMode) "Enter your Lua script name" else "Enter your app name",
                     testTag = "new_project_name_input"
                 )
                 Text(
-                    text = "e.g. My Awesome App",
+                    text = if (isLuaMode) "Saves inside Download/lua/<name>.lua" else "e.g. My Awesome App",
                     color = StudioTextSecondary,
                     fontSize = 11.sp
                 )
             }
 
-            // Package Name *
+            // Package Name / Script Identifier *
             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Row {
-                    Text("Package Name ", color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                    Text(
+                        if (isLuaMode) "Script ID / Namespace " else "Package Name ",
+                        color = Color.White,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.SemiBold
+                    )
                     Text("*", color = Color(0xFFEF4444), fontSize = 13.sp, fontWeight = FontWeight.Bold)
                 }
                 DarkStudioTextField(
                     value = packageName,
                     onValueChange = { packageName = it },
                     label = "",
-                    placeholder = "com.example.myapp",
+                    placeholder = if (isLuaMode) "lua.script.myscript" else "com.example.myapp",
                     testTag = "new_project_package_input"
                 )
                 Text(
-                    text = "Use lowercase letters, numbers and dots",
+                    text = if (isLuaMode) "Lua Script mode creates & runs a .lua script (not an APK)" else "Use lowercase letters, numbers and dots",
                     color = StudioTextSecondary,
                     fontSize = 11.sp
                 )
@@ -1814,12 +1965,17 @@ private fun CreateNewAppWizardScreenContent(
 
             Button(
                 onClick = {
-                    val finalName = appName.trim().ifEmpty { "My App" }
-                    val slug = finalName.lowercase().replace(Regex("[^a-z0-9]"), "").ifEmpty { "myapp" }
-                    val finalPkg = packageName.trim().ifEmpty { "com.example.$slug" }
+                    val finalName = appName.trim().ifEmpty { if (isLuaMode) "My Lua Script" else "My App" }
+                    val slug = finalName.lowercase().replace(Regex("[^a-z0-9]"), "").ifEmpty { if (isLuaMode) "luascript" else "myapp" }
+                    val finalPkg = if (isLuaMode) {
+                        val rawPkg = packageName.trim()
+                        if (rawPkg.startsWith("lua.script", ignoreCase = true)) rawPkg else "lua.script.$slug"
+                    } else {
+                        packageName.trim().ifEmpty { "com.example.$slug" }
+                    }
                     onCreateApp(finalName, finalPkg, finalName, selectedLogoPath)
                 },
-                colors = ButtonDefaults.buttonColors(containerColor = StudioIndigoPrimary),
+                colors = ButtonDefaults.buttonColors(containerColor = if (isLuaMode) Color(0xFF10B981) else StudioIndigoPrimary),
                 shape = RoundedCornerShape(12.dp),
                 modifier = Modifier
                     .weight(1f)
