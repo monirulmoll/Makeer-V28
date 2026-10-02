@@ -31,8 +31,17 @@ public class DynamicOverlayRegistry {
     private static volatile String activeCanvasBgHex = "#FFFFFF";
     private static volatile String activeCanvasBgImagePath = "";
     private static volatile boolean activeAutoFixSize = false;
+    private static volatile boolean activeLuaScriptMode = false;
     private static volatile boolean bundledStandaloneLoaded = false;
     private static final List<OverlayItemSpec> activeItems = Collections.synchronizedList(new ArrayList());
+
+    public static synchronized void setActiveLuaScriptMode(boolean luaMode) {
+        activeLuaScriptMode = luaMode;
+    }
+
+    public static synchronized boolean isActiveLuaScriptMode() {
+        return activeLuaScriptMode;
+    }
 
     public static synchronized void updateActiveOverlay(String title, int widthDp, int heightDp, String bgHex, List<OverlayItemSpec> items) {
         DynamicOverlayRegistry.updateActiveOverlay(title, widthDp, heightDp, bgHex, false, items);

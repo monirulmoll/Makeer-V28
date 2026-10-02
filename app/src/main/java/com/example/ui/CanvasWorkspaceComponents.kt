@@ -111,7 +111,9 @@ import com.example.data.CanvasComponentEntity
 import com.example.data.ComponentWidgetType
 import com.example.data.ConfigWriteAuditEntity
 import com.example.data.StudioProjectEntity
+import com.example.data.isLuaScriptProject
 import com.example.data.isScreen1WidgetType
+import com.example.engine.LuaScriptEngine
 import java.io.File
 import kotlin.math.abs
 import kotlin.math.roundToInt
@@ -297,18 +299,38 @@ fun SketchwareStudioSplitWorkspace(
     val latestOnMoveComponent by rememberUpdatedState(onMoveComponent)
     val latestOnResizeComponent by rememberUpdatedState(onResizeComponent)
 
+    val isLuaScriptMode = project.isLuaScriptProject()
+
     Row(modifier = modifier.fillMaxSize()) {
         // LEFT SIDE WIDGET PALETTE (Hidden when Preview is in Full Screen mode so Preview fills the screen)
         if (!isPreviewFullScreen) {
             LeftSideWidgetPalette(
                 activePreviewScreen = activePreviewScreen,
+                isLuaScriptMode = isLuaScriptMode,
                 isAutoFixSize = project.autoFixSize,
                 onSelectPaletteEntry = onAddPaletteEntry,
                 onToggleAutoFixSize = onToggleAutoFixSize
             )
         }
 
-        if (activePreviewScreen == 1) {
+        if (isLuaScriptMode) {
+            LuaChoiceMenuPreviewCanvas(
+                project = project,
+                components = screen2Components,
+                selectedComponentId = selectedComponentId,
+                isLivePreviewMode = isLivePreviewMode,
+                isPreviewFullScreen = isPreviewFullScreen,
+                onTogglePreviewFullScreen = onTogglePreviewFullScreen,
+                onSelectComponent = onSelectComponent,
+                onOpenEditFloatingPanel = onOpenEditFloatingPanel,
+                onTriggerComponent = { comp ->
+                    onTriggerComponentLive(comp, null)
+                },
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxHeight()
+            )
+        } else if (activePreviewScreen == 1) {
             // PREVIEW 1: MAIN SCREEN EDITOR (Start/Stop, TextView, Link Open, ImageView + Fix Dhanche + Corner Resize)
             InteractiveMainScreen1Canvas(
                 project = project,
@@ -367,10 +389,58 @@ fun SketchwareStudioSplitWorkspace(
 @Composable
 private fun LeftSideWidgetPalette(
     activePreviewScreen: Int = 2,
+    isLuaScriptMode: Boolean = false,
     isAutoFixSize: Boolean,
     onSelectPaletteEntry: (SketchwarePaletteEntry) -> Unit,
     onToggleAutoFixSize: () -> Unit
 ) {
+    val luaChoiceItems = remember {
+        listOf(
+            LeftPaletteItemSpec(
+                entry = SketchwarePaletteEntry("🟢  START", ComponentWidgetType.BUTTON, 196, 42),
+                icon = Icons.Default.PlayArrow,
+                iconTint = Color(0xFF10B981),
+                tagSlug = "lua_start"
+            ),
+            LeftPaletteItemSpec(
+                entry = SketchwarePaletteEntry("🔴  STOP", ComponentWidgetType.TOGGLE, 196, 42),
+                icon = Icons.Default.Stop,
+                iconTint = Color(0xFFEF4444),
+                tagSlug = "lua_stop"
+            ),
+            LeftPaletteItemSpec(
+                entry = SketchwarePaletteEntry("📝  TEXT VIEW", ComponentWidgetType.TEXT, 196, 36),
+                icon = Icons.Default.TextFields,
+                iconTint = Color(0xFFF472B6),
+                tagSlug = "lua_text"
+            ),
+            LeftPaletteItemSpec(
+                entry = SketchwarePaletteEntry("🔗  LINK OPEN", ComponentWidgetType.LINK, 196, 42),
+                icon = Icons.Default.Link,
+                iconTint = Color(0xFF38BDF8),
+                tagSlug = "lua_link"
+            ),
+            LeftPaletteItemSpec(
+                entry = SketchwarePaletteEntry("🖼️  IMAGE VIEW", ComponentWidgetType.IMAGE, 196, 42),
+                icon = Icons.Default.Image,
+                iconTint = Color(0xFFF59E0B),
+                tagSlug = "lua_image"
+            ),
+            LeftPaletteItemSpec(
+                entry = SketchwarePaletteEntry("🎚️  SLIDER", ComponentWidgetType.SLIDER, 196, 52),
+                icon = Icons.Default.Tune,
+                iconTint = Color(0xFFA78BFA),
+                tagSlug = "lua_slider"
+            ),
+            LeftPaletteItemSpec(
+                entry = SketchwarePaletteEntry("✏️  INPUT", ComponentWidgetType.INPUT, 196, 46),
+                icon = Icons.Default.Edit,
+                iconTint = Color(0xFFFBBF24),
+                tagSlug = "lua_input"
+            )
+        )
+    }
+
     val screen2WidgetItems = remember {
         listOf(
             LeftPaletteItemSpec(
@@ -441,7 +511,11 @@ private fun LeftSideWidgetPalette(
         )
     }
 
-    val activeItems = if (activePreviewScreen == 1) screen1WidgetItems else screen2WidgetItems
+    val activeItems = when {
+        isLuaScriptMode -> luaChoiceItems
+        activePreviewScreen == 1 -> screen1WidgetItems
+        else -> screen2WidgetItems
+    }
 
     Surface(
         color = Color(0xFF0E1526),
@@ -460,7 +534,9 @@ private fun LeftSideWidgetPalette(
                     .padding(horizontal = 6.dp, vertical = 6.dp),
                 verticalArrangement = Arrangement.spacedBy(5.dp)
             ) {
-                if (activePreviewScreen == 1) {
+                if (isLuaScriptMode) {
+                    PaletteCategoryHeader("gg.choice Items", Color(0xFF10B981))
+                } else if (activePreviewScreen == 1) {
                     PaletteCategoryHeader("Widgets", Color(0xFF38BDF8))
                 } else {
                     PaletteCategoryHeader("Widgets (6)", Color(0xFFFB923C))
@@ -473,7 +549,25 @@ private fun LeftSideWidgetPalette(
                 }
             }
 
-            if (activePreviewScreen == 2) {
+            if (isLuaScriptMode) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(Color(0xFF090D18))
+                        .border(BorderStroke(0.5.dp, Color(0xFF1E293B)))
+                        .padding(8.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = "gg.choice Menu\n+ Sx UI Button",
+                        color = Color(0xFF10B981),
+                        fontSize = 9.5.sp,
+                        fontWeight = FontWeight.ExtraBold,
+                        textAlign = TextAlign.Center,
+                        lineHeight = 12.sp
+                    )
+                }
+            } else if (activePreviewScreen == 2) {
                 // Bottom pinned Auto Size button for Screen 2
                 Box(
                     modifier = Modifier
@@ -1861,6 +1955,421 @@ fun InteractiveMainScreen1Canvas(
                             fontWeight = FontWeight.SemiBold,
                             modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
                         )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun LuaChoiceMenuPreviewCanvas(
+    project: StudioProjectEntity,
+    components: List<CanvasComponentEntity>,
+    selectedComponentId: Long?,
+    isLivePreviewMode: Boolean = false,
+    isPreviewFullScreen: Boolean = false,
+    onTogglePreviewFullScreen: () -> Unit = {},
+    onSelectComponent: (Long?) -> Unit,
+    onOpenEditFloatingPanel: () -> Unit = {},
+    onTriggerComponent: (CanvasComponentEntity) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val formattedTitle = remember(project.overlayTitle, project.name) {
+        val raw = project.overlayTitle.trim().ifEmpty { project.name.trim().ifEmpty { "PC PANEL" } }
+        LuaScriptEngine.formatLuaPanelHeaderTitle(raw)
+    }
+
+    var isLuaHidden by remember(project.id) { mutableStateOf(false) }
+    var isLuaRunning by remember(project.id) { mutableStateOf(true) }
+
+    Box(
+        modifier = modifier
+            .fillMaxSize()
+            .background(Color(0xFF070B14))
+            .clickable { onSelectComponent(null) }
+            .padding(if (isPreviewFullScreen) 0.dp else 8.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Card(
+            shape = RoundedCornerShape(if (isPreviewFullScreen) 0.dp else 26.dp),
+            colors = CardDefaults.cardColors(containerColor = Color(0xFF0B0E14)),
+            border = if (isPreviewFullScreen) null else BorderStroke(2.dp, Color(0xFF233152)),
+            elevation = CardDefaults.cardElevation(defaultElevation = 10.dp),
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(if (isPreviewFullScreen) 0.dp else 2.dp)
+        ) {
+            Column(modifier = Modifier.fillMaxSize()) {
+                // Status Bar (No BG color chip or custom dp size in Lua mode)
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(Color(0xFF0A0F1E))
+                        .padding(horizontal = 14.dp, vertical = 7.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(6.dp)
+                                .clip(CircleShape)
+                                .background(Color(0xFF10B981))
+                        )
+                        Text(
+                            text = "gg.choice()",
+                            color = Color(0xFF34D399),
+                            fontSize = 11.sp,
+                            fontFamily = FontFamily.Monospace,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+
+                    Text(
+                        text = if (isLivePreviewMode) "RUN MODE (Tap item to run)" else "EDIT MODE (Tap item to edit)",
+                        color = if (isLivePreviewMode) Color(0xFF34D399) else Color(0xFF94A3B8),
+                        fontSize = 9.5.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+
+                    Surface(
+                        shape = RoundedCornerShape(7.dp),
+                        color = if (isPreviewFullScreen) Color(0xFF4F46E5) else Color(0xFF15203B),
+                        border = BorderStroke(
+                            1.dp,
+                            if (isPreviewFullScreen) Color(0xFF818CF8) else Color(0xFF38BDF8).copy(alpha = 0.7f)
+                        ),
+                        modifier = Modifier
+                            .size(26.dp)
+                            .clickable { onTogglePreviewFullScreen() }
+                            .testTag("preview_fullscreen_toggle_button")
+                    ) {
+                        Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
+                            Icon(
+                                imageVector = if (isPreviewFullScreen) Icons.Default.FullscreenExit else Icons.Default.Fullscreen,
+                                contentDescription = if (isPreviewFullScreen) "Exit Full Screen Preview" else "Full Screen Preview",
+                                tint = Color.White,
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
+                    }
+                }
+
+                // Simulated GameGuardian Screen Area
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(Color(0xFF0B0E14))
+                        .padding(12.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    if (!isLuaRunning) {
+                        // GameGuardian "Script ended:" dialog when ❌ KILL is clicked
+                        Surface(
+                            shape = RoundedCornerShape(4.dp),
+                            color = Color(0xFF3E4147),
+                            border = BorderStroke(1.dp, Color(0xFF555960)),
+                            modifier = Modifier.fillMaxWidth(0.92f)
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(16.dp),
+                                verticalArrangement = Arrangement.spacedBy(12.dp)
+                            ) {
+                                Text(
+                                    text = "Script ended:\nos.exit() called from ❌  KILL",
+                                    color = Color.White,
+                                    fontSize = 13.sp
+                                )
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    TextButton(
+                                        onClick = {
+                                            isLuaRunning = true
+                                            isLuaHidden = false
+                                        }
+                                    ) {
+                                        Text("RESTART", color = Color.White, fontWeight = FontWeight.Bold)
+                                    }
+                                    TextButton(
+                                        onClick = {
+                                            isLuaRunning = true
+                                            isLuaHidden = false
+                                        }
+                                    ) {
+                                        Text("OK", color = Color.White, fontWeight = FontWeight.Bold)
+                                    }
+                                }
+                            }
+                        }
+                    } else if (isLuaHidden) {
+                        // GameGuardian gg.showUiButton() floating "Sx" button when ➖ MINIMIZE or 🙈 HIDE is clicked
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            Surface(
+                                shape = RoundedCornerShape(8.dp),
+                                color = Color(0xCC26292E),
+                                border = BorderStroke(1.5.dp, Color(0xFF8B5CF6)),
+                                modifier = Modifier
+                                    .size(52.dp)
+                                    .clickable { isLuaHidden = false }
+                                    .testTag("lua_sx_ui_button")
+                            ) {
+                                Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
+                                    Text(
+                                        text = "Sx",
+                                        color = Color(0xFF38BDF8),
+                                        fontSize = 16.sp,
+                                        fontWeight = FontWeight.ExtraBold
+                                    )
+                                }
+                            }
+                            Text(
+                                text = "gg.showUiButton() active — Tap 'Sx' to open panel()",
+                                color = Color(0xFF94A3B8),
+                                fontSize = 10.sp
+                            )
+                        }
+                    } else {
+                        // Authentic GameGuardian gg.choice({...}, nil, "◈  PC PANEL  ◈") Dialog
+                        Surface(
+                            shape = RoundedCornerShape(4.dp),
+                            color = Color(0xFF303338),
+                            border = BorderStroke(1.dp, Color(0xFF4B5563)),
+                            tonalElevation = 8.dp,
+                            modifier = Modifier
+                                .fillMaxWidth(0.95f)
+                                .testTag("lua_gg_choice_dialog")
+                        ) {
+                            Column(modifier = Modifier.fillMaxWidth()) {
+                                // gg.choice Header Bar: "◈  PC PANEL  ◈"
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .background(Color(0xFF24272B))
+                                        .clickable { onOpenEditFloatingPanel() }
+                                        .padding(horizontal = 14.dp, vertical = 11.dp)
+                                        .testTag("floating_panel_header_bar"),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = formattedTitle,
+                                        color = Color.White,
+                                        fontSize = 14.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        modifier = Modifier.weight(1f)
+                                    )
+                                    Icon(
+                                        imageVector = Icons.Default.Edit,
+                                        contentDescription = "Edit Panel Title",
+                                        tint = Color(0xFF94A3B8),
+                                        modifier = Modifier.size(15.dp)
+                                    )
+                                }
+
+                                HorizontalDivider(color = Color(0xFF4B5563), thickness = 1.dp)
+
+                                // Scrollable gg.choice Items List
+                                Column(
+                                    modifier = Modifier
+                                        .weight(1f, fill = false)
+                                        .fillMaxWidth()
+                                        .verticalScroll(rememberScrollState())
+                                ) {
+                                    if (components.isEmpty()) {
+                                        Box(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(vertical = 18.dp, horizontal = 14.dp),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Text(
+                                                text = "Tap any item on the left palette (🟢 START, 🔴 STOP, etc.) to add to gg.choice()",
+                                                color = Color(0xFF9CA3AF),
+                                                fontSize = 11.sp,
+                                                textAlign = TextAlign.Center
+                                            )
+                                        }
+                                    }
+
+                                    components.forEachIndexed { index, comp ->
+                                        val isSelected = comp.id == selectedComponentId
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .background(
+                                                    if (isSelected) Color(0xFF1E3A8A).copy(alpha = 0.55f)
+                                                    else Color.Transparent
+                                                )
+                                                .clickable {
+                                                    if (isLivePreviewMode) {
+                                                        onTriggerComponent(comp)
+                                                    } else {
+                                                        onSelectComponent(comp.id)
+                                                    }
+                                                }
+                                                .padding(horizontal = 14.dp, vertical = 11.dp)
+                                                .testTag("lua_choice_item_${comp.id}"),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(12.dp)
+                                        ) {
+                                            // Radio circle like gg.choice
+                                            Box(
+                                                modifier = Modifier
+                                                    .size(16.dp)
+                                                    .clip(CircleShape)
+                                                    .border(
+                                                        BorderStroke(
+                                                            2.dp,
+                                                            if (isSelected) Color(0xFF38BDF8) else Color(0xFF9CA3AF)
+                                                        ),
+                                                        CircleShape
+                                                    ),
+                                                contentAlignment = Alignment.Center
+                                            ) {
+                                                if (isSelected) {
+                                                    Box(
+                                                        modifier = Modifier
+                                                            .size(8.dp)
+                                                            .clip(CircleShape)
+                                                            .background(Color(0xFF38BDF8))
+                                                    )
+                                                }
+                                            }
+
+                                            Column(modifier = Modifier.weight(1f)) {
+                                                Text(
+                                                    text = comp.label,
+                                                    color = Color.White,
+                                                    fontSize = 13.sp,
+                                                    fontWeight = FontWeight.SemiBold,
+                                                    maxLines = 1,
+                                                    overflow = TextOverflow.Ellipsis
+                                                )
+                                                Text(
+                                                    text = "c == ${index + 1}  •  ${LuaScriptEngine.resolveWidgetButtonLogic(comp).lines().firstOrNull().orEmpty()}",
+                                                    color = Color(0xFF9CA3AF),
+                                                    fontSize = 9.5.sp,
+                                                    fontFamily = FontFamily.Monospace,
+                                                    maxLines = 1,
+                                                    overflow = TextOverflow.Ellipsis
+                                                )
+                                            }
+
+                                            // Quick test button on the right
+                                            Surface(
+                                                shape = RoundedCornerShape(6.dp),
+                                                color = Color(0xFF065F46),
+                                                modifier = Modifier.clickable { onTriggerComponent(comp) }
+                                            ) {
+                                                Text(
+                                                    text = "▶ Test",
+                                                    color = Color(0xFF6EE7B7),
+                                                    fontSize = 9.5.sp,
+                                                    fontWeight = FontWeight.Bold,
+                                                    modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp)
+                                                )
+                                            }
+                                        }
+                                        HorizontalDivider(color = Color(0xFF3F434A), thickness = 0.5.dp)
+                                    }
+
+                                    // Built-in 3 bottom items from the user's gg.choice script:
+                                    // "➖  MINIMIZE", "🙈  HIDE", "❌  KILL"
+                                    val builtInControls = listOf(
+                                        Triple("➖  MINIMIZE", "hidden = true; gg.setVisible(false)", components.size + 1),
+                                        Triple("🙈  HIDE", "hidden = true; gg.setVisible(false)", components.size + 2),
+                                        Triple("❌  KILL", "running = false; os.exit()", components.size + 3)
+                                    )
+                                    builtInControls.forEach { (ctrlLabel, ctrlDesc, ctrlIdx) ->
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .clickable {
+                                                    if (ctrlLabel.contains("KILL")) {
+                                                        isLuaRunning = false
+                                                    } else {
+                                                        isLuaHidden = true
+                                                    }
+                                                }
+                                                .padding(horizontal = 14.dp, vertical = 10.dp),
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(12.dp)
+                                        ) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .size(16.dp)
+                                                    .clip(CircleShape)
+                                                    .border(BorderStroke(2.dp, Color(0xFF6B7280)), CircleShape)
+                                            )
+                                            Column(modifier = Modifier.weight(1f)) {
+                                                Text(
+                                                    text = ctrlLabel,
+                                                    color = Color(0xFFE5E7EB),
+                                                    fontSize = 13.sp,
+                                                    fontWeight = FontWeight.Medium
+                                                )
+                                                Text(
+                                                    text = "c == $ctrlIdx  •  $ctrlDesc",
+                                                    color = Color(0xFF9CA3AF),
+                                                    fontSize = 9.sp,
+                                                    fontFamily = FontFamily.Monospace,
+                                                    maxLines = 1,
+                                                    overflow = TextOverflow.Ellipsis
+                                                )
+                                            }
+                                        }
+                                        HorizontalDivider(color = Color(0xFF3F434A), thickness = 0.5.dp)
+                                    }
+                                }
+
+                                // GameGuardian Dialog Footer (CANCEL / OK)
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .background(Color(0xFF24272B))
+                                        .padding(horizontal = 14.dp, vertical = 8.dp),
+                                    horizontalArrangement = Arrangement.End,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    TextButton(onClick = { isLuaHidden = true }) {
+                                        Text(
+                                            text = "CANCEL",
+                                            color = Color(0xFF9CA3AF),
+                                            fontSize = 12.sp,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                    }
+                                    Spacer(Modifier.width(8.dp))
+                                    TextButton(
+                                        onClick = {
+                                            val targetComp = components.find { it.id == selectedComponentId } ?: components.firstOrNull()
+                                            if (targetComp != null) {
+                                                onTriggerComponent(targetComp)
+                                            }
+                                        }
+                                    ) {
+                                        Text(
+                                            text = "OK",
+                                            color = Color(0xFF38BDF8),
+                                            fontSize = 12.sp,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }

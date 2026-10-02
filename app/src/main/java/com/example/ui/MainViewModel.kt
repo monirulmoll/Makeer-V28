@@ -978,10 +978,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             else -> "#FFFFFF"
         }
 
-        val defaultLabel = "$customPrefix #${existingCount + 1}"
+        val isLua = project.isLuaScriptProject()
+        val defaultLabel = if (isLua) {
+            val samePrefixCount = sameScreenComps.count {
+                it.label.equals(customPrefix, ignoreCase = true) ||
+                    it.label.startsWith("$customPrefix #", ignoreCase = true)
+            }
+            if (samePrefixCount == 0) customPrefix else "$customPrefix #${samePrefixCount + 1}"
+        } else {
+            "$customPrefix #${existingCount + 1}"
+        }
 
         viewModelScope.launch {
-            val isLua = project.isLuaScriptProject()
             val isNonExecutableWidget = widgetType == ComponentWidgetType.TEXT || widgetType == ComponentWidgetType.LINK
             val defaultLink = if (widgetType == ComponentWidgetType.LINK) "https://google.com" else ""
             val defaultOnPayload = if (isLua) {
@@ -1958,6 +1966,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
             }
             val effectiveSize = latestCanvasSizes[project.id] ?: (project.canvasWidthDp to project.canvasHeightDp)
+            DynamicOverlayRegistry.setActiveLuaScriptMode(true)
             DynamicOverlayRegistry.updateActiveOverlay(
                 project.overlayTitle.ifBlank { project.name },
                 project.floatingLogoPath.ifBlank { project.appLogoPath },
@@ -2071,6 +2080,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
 
         val effectiveSize = latestCanvasSizes[project.id] ?: (project.canvasWidthDp to project.canvasHeightDp)
+        DynamicOverlayRegistry.setActiveLuaScriptMode(false)
         DynamicOverlayRegistry.updateActiveOverlay(
             project.overlayTitle.ifBlank { project.name },
             project.floatingLogoPath.ifBlank { project.appLogoPath },

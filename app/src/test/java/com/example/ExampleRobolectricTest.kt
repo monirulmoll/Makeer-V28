@@ -349,4 +349,51 @@ class ExampleRobolectricTest {
         )
         assertEquals("ORIGINAL_DEFAULT_DATA=0\n", targetReplaceFile.readText())
     }
+
+    @Test
+    fun `verify LuaScriptEngine generates gg choice menu and executes button logic`() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val luaProject = com.example.data.StudioProjectEntity(
+            id = 2L,
+            name = "PC Panel Script",
+            packageName = "lua.script.pcpanel",
+            overlayTitle = "PC PANEL"
+        )
+        val startComp = CanvasComponentEntity(
+            id = 10L,
+            projectId = 2L,
+            type = "BUTTON",
+            label = "🟢  START",
+            onPayloadHex = com.example.engine.LuaScriptEngine.defaultButtonLogicForWidget("🟢  START", "BUTTON")
+        )
+        val stopComp = CanvasComponentEntity(
+            id = 11L,
+            projectId = 2L,
+            type = "TOGGLE",
+            label = "🔴  STOP",
+            onPayloadHex = com.example.engine.LuaScriptEngine.defaultButtonLogicForWidget("🔴  STOP", "TOGGLE")
+        )
+
+        val script = com.example.engine.LuaScriptEngine.generateLuaScript(luaProject, listOf(startComp, stopComp))
+        assertTrue(script.contains("local c = gg.choice({"))
+        assertTrue(script.contains("\"🟢  START\","))
+        assertTrue(script.contains("\"🔴  STOP\","))
+        assertTrue(script.contains("\"➖  MINIMIZE\","))
+        assertTrue(script.contains("\"🙈  HIDE\","))
+        assertTrue(script.contains("\"❌  KILL\""))
+        assertTrue(script.contains("gg.toast(\"START\")"))
+        assertTrue(script.contains("gg.toast(\"STOP\")"))
+        assertTrue(script.contains("gg.showUiButton()"))
+
+        val execResult = com.example.engine.LuaScriptEngine.executeWidgetLuaLogic(startComp, true, 0, "")
+        assertEquals("START", execResult.toastMessage)
+
+        val saveResult = com.example.engine.LuaScriptEngine.saveLuaScriptToDownloads(
+            context,
+            luaProject,
+            listOf(startComp, stopComp)
+        )
+        assertTrue(saveResult.localFile.exists())
+        assertEquals("pc_panel_script.lua", saveResult.fileName)
+    }
 }

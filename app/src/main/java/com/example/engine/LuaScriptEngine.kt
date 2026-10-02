@@ -46,49 +46,25 @@ object LuaScriptEngine {
         return "/storage/emulated/0/Download/lua/${safeSlug}.lua"
     }
 
-    fun defaultButtonLogicForWidget(label: String, type: String, linkUrl: String = ""): String {
-        val cleanLabel = label.replace("\"", "\\\"").ifBlank { "Widget" }
-        return when (type.uppercase(Locale.US)) {
-            ComponentWidgetType.TOGGLE.name -> {
-                buildString {
-                    appendLine("if state then")
-                    appendLine("  print(\"[$cleanLabel] Turned ON\")")
-                    appendLine("  toast(\"$cleanLabel: ON\")")
-                    appendLine("else")
-                    appendLine("  print(\"[$cleanLabel] Turned OFF\")")
-                    appendLine("  toast(\"$cleanLabel: OFF\")")
-                    append("end")
-                }
-            }
-            ComponentWidgetType.SLIDER.name -> {
-                buildString {
-                    appendLine("print(\"[$cleanLabel] Slider value: \" .. tostring(value))")
-                    append("toast(\"$cleanLabel: \" .. tostring(value))")
-                }
-            }
-            ComponentWidgetType.INPUT.name -> {
-                buildString {
-                    appendLine("print(\"[$cleanLabel] Input text: \" .. tostring(text))")
-                    append("toast(\"$cleanLabel: \" .. tostring(text))")
-                }
-            }
-            ComponentWidgetType.LINK.name -> {
-                val safeUrl = linkUrl.ifBlank { "https://google.com" }.replace("\"", "\\\"")
-                buildString {
-                    appendLine("openLink(\"$safeUrl\")")
-                    append("print(\"[$cleanLabel] Opening link: $safeUrl\")")
-                }
-            }
-            ComponentWidgetType.TEXT.name -> {
-                "-- TextView display widget (no click action required)"
-            }
-            else -> {
-                buildString {
-                    appendLine("print(\"[$cleanLabel] Button clicked\")")
-                    append("toast(\"$cleanLabel executed!\")")
-                }
-            }
+    fun formatLuaPanelHeaderTitle(rawTitle: String): String {
+        val trimmed = rawTitle.trim().ifEmpty { "PC PANEL" }
+        return if (trimmed.contains("◈")) {
+            trimmed
+        } else {
+            "◈  ${trimmed.uppercase(Locale.US)}  ◈"
         }
+    }
+
+    fun stripLeadingEmojiForToast(label: String): String {
+        val cleaned = label
+            .replace(Regex("^[🟢🔴📝🔗🖼️🎚️✏️⚡🛡️🎯➕➖🙈❌\\s]+"), "")
+            .trim()
+        return cleaned.ifEmpty { label.trim().ifEmpty { "START" } }
+    }
+
+    fun defaultButtonLogicForWidget(label: String, type: String, linkUrl: String = ""): String {
+        val cleanToastText = stripLeadingEmojiForToast(label).replace("\"", "\\\"")
+        return "gg.toast(\"$cleanToastText\")"
     }
 
     fun resolveWidgetButtonLogic(component: CanvasComponentEntity): String {
@@ -97,7 +73,8 @@ object LuaScriptEngine {
             raw.equals("On", ignoreCase = true) ||
             raw.equals("0x01", ignoreCase = true) ||
             raw.startsWith("/data/") ||
-            raw.startsWith("/storage/")
+            raw.startsWith("/storage/") ||
+            raw.startsWith("-- TextView display widget")
         return if (isLegacyPlaceholder) {
             defaultButtonLogicForWidget(component.label, component.type, component.linkUrl)
         } else {
@@ -110,66 +87,72 @@ object LuaScriptEngine {
         components: List<CanvasComponentEntity>
     ): String {
         val luaWidgets = components.filter { !isScreen1WidgetType(it.type) }
-        val panelTitle = project.overlayTitle.ifBlank { project.name.ifBlank { "Lua Panel" } }
-        val fileName = scriptFileNameForProject(project)
+        val rawTitle = project.overlayTitle.ifBlank { project.name.ifBlank { "PC PANEL" } }
+        val formattedHeader = formatLuaPanelHeaderTitle(rawTitle)
 
         return buildString {
-            appendLine("-- ==========================================================")
-            appendLine("-- Generated Lua Script: $fileName")
-            appendLine("-- Panel Title: $panelTitle")
-            appendLine("-- Panel Size: ${project.canvasWidthDp}x${project.canvasHeightDp} dp | Background: ${project.canvasBgColorHex}")
-            appendLine("-- Saved Path: /storage/emulated/0/Download/lua/$fileName")
-            appendLine("-- ==========================================================")
+            appendLine("gg.setVisible(false)")
             appendLine()
-            appendLine("local PanelConfig = {")
-            appendLine("  title = \"${escapeLuaString(panelTitle)}\",")
-            appendLine("  width = ${project.canvasWidthDp},")
-            appendLine("  height = ${project.canvasHeightDp},")
-            appendLine("  bgColor = \"${escapeLuaString(project.canvasBgColorHex)}\",")
-            appendLine("  autoFixSize = ${project.autoFixSize}")
-            appendLine("}")
+            appendLine("local running = true")
+            appendLine("local hidden = false")
             appendLine()
-            appendLine("local WidgetState = {")
-            luaWidgets.forEachIndexed { index, comp ->
-                val comma = if (index < luaWidgets.lastIndex) "," else ""
-                val initState = comp.currentValue == "1" || comp.currentValue.equals("true", ignoreCase = true)
-                val initVal = comp.currentValue.toIntOrNull() ?: 0
-                appendLine(
-                    "  [${comp.id}] = { id = ${comp.id}, type = \"${comp.type}\", label = \"${escapeLuaString(comp.label)}\", state = $initState, value = $initVal, text = \"${escapeLuaString(comp.currentValue)}\" }$comma"
-                )
+            appendLine("local function panel()")
+            appendLine("    if not running then return end")
+            appendLine()
+            appendLine("    local c = gg.choice({")
+            luaWidgets.forEach { comp ->
+                appendLine("        \"${escapeLuaString(comp.label)}\",")
             }
-            appendLine("}")
+            appendLine("        \"➖  MINIMIZE\",")
+            appendLine("        \"🙈  HIDE\",")
+            appendLine("        \"❌  KILL\"")
+            appendLine("    }, nil, \"${escapeLuaString(formattedHeader)}\")")
             appendLine()
-            appendLine("-- ==========================================================")
-            appendLine("-- WIDGET BUTTON CLICK LOGIC HANDLERS")
-            appendLine("-- ==========================================================")
-            for (comp in luaWidgets) {
-                val fnName = "onWidget_${comp.id}_Action"
-                val logicBody = resolveWidgetButtonLogic(comp)
-                appendLine("function $fnName(label, state, value, text, url)")
-                logicBody.lines().forEach { line ->
-                    appendLine("  $line")
+
+            val minIdx = luaWidgets.size + 1
+            val hideIdx = luaWidgets.size + 2
+            val killIdx = luaWidgets.size + 3
+
+            if (luaWidgets.isNotEmpty()) {
+                luaWidgets.forEachIndexed { index, comp ->
+                    val choiceIdx = index + 1
+                    val keyword = if (index == 0) "if" else "elseif"
+                    appendLine("    $keyword c == $choiceIdx then")
+                    val logicLines = resolveWidgetButtonLogic(comp).lines()
+                    logicLines.forEach { line ->
+                        appendLine("        $line")
+                    }
                 }
-                appendLine("end")
-                appendLine()
+                appendLine("    elseif c == $minIdx then")
+            } else {
+                appendLine("    if c == $minIdx then")
             }
-            appendLine("-- ==========================================================")
-            appendLine("-- LUA PANEL DISPATCHER & MENU LOOP")
-            appendLine("-- ==========================================================")
-            appendLine("function triggerWidgetAction(widgetId, nextState, nextValue, nextText)")
-            appendLine("  local item = WidgetState[widgetId]")
-            appendLine("  if not item then return end")
-            appendLine("  if nextState ~= nil then item.state = nextState end")
-            appendLine("  if nextValue ~= nil then item.value = nextValue end")
-            appendLine("  if nextText ~= nil then item.text = nextText end")
-            for (comp in luaWidgets) {
-                appendLine("  if widgetId == ${comp.id} then")
-                appendLine("    return onWidget_${comp.id}_Action(item.label, item.state, item.value, item.text, \"${escapeLuaString(comp.linkUrl)}\")")
-                appendLine("  end")
-            }
+            appendLine("        hidden = true")
+            appendLine("        gg.setVisible(false)")
+            appendLine("    elseif c == $hideIdx then")
+            appendLine("        hidden = true")
+            appendLine("        gg.setVisible(false)")
+            appendLine("    elseif c == $killIdx then")
+            appendLine("        running = false")
+            appendLine("        os.exit()")
+            appendLine("    end")
             appendLine("end")
             appendLine()
-            appendLine("print(\"Loaded Lua Script: \" .. PanelConfig.title .. \" (${luaWidgets.size} widgets)\")")
+            appendLine("gg.showUiButton()")
+            appendLine()
+            appendLine("while running do")
+            appendLine("    if gg.isClickedUiButton() then")
+            appendLine("        hidden = false")
+            appendLine("        panel()")
+            appendLine("    end")
+            appendLine()
+            appendLine("    if not hidden and gg.isVisible(true) then")
+            appendLine("        gg.setVisible(false)")
+            appendLine("        panel()")
+            appendLine("    end")
+            appendLine()
+            appendLine("    gg.sleep(100)")
+            append("end")
         }
     }
 
