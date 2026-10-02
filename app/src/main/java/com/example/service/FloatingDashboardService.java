@@ -213,8 +213,8 @@ extends Service {
     private void showDynamicSystemOverlayWindow() {
         File lf;
         DynamicOverlayRegistry.loadFromBundledAssetsIfEmpty((Context)this);
-        int panelWidthDp = Math.max(180, Math.min(340, DynamicOverlayRegistry.getActiveCanvasWidthDp()));
-        int panelHeightDp = Math.max(160, Math.min(480, DynamicOverlayRegistry.getActiveCanvasHeightDp()));
+        int panelWidthDp = Math.max(140, Math.min(380, DynamicOverlayRegistry.getActiveCanvasWidthDp()));
+        int panelHeightDp = Math.max(140, Math.min(540, DynamicOverlayRegistry.getActiveCanvasHeightDp()));
         final int currentCanvasW = this.dpToPx(panelWidthDp);
         final int currentCanvasH = this.dpToPx(panelHeightDp);
 
@@ -253,17 +253,26 @@ extends Service {
             clipBg.setCornerRadius((float)this.dpToPx(16));
             bgIv.setBackground((Drawable)clipBg);
             bgIv.setClipToOutline(true);
-            panelRoot.addView((View)bgIv, (ViewGroup.LayoutParams)new FrameLayout.LayoutParams(currentCanvasW, currentCanvasH));
+            panelRoot.addView((View)bgIv, (ViewGroup.LayoutParams)new FrameLayout.LayoutParams(-1, -1));
         }
 
         final LinearLayout container = new LinearLayout((Context)this);
         container.setOrientation(1);
         container.setBackgroundColor(0);
 
+        float headerScale = Math.max(0.55f, Math.min(1.0f, (float)panelWidthDp / 260.0f));
+        int hPadH = this.dpToPx(Math.max(4, Math.round(10.0f * headerScale)));
+        int hPadV = this.dpToPx(Math.max(4, Math.round(8.0f * headerScale)));
+        int logoDp = Math.max(14, Math.round(24.0f * headerScale));
+        int logoMarginPx = this.dpToPx(Math.max(3, Math.round(8.0f * headerScale)));
+        float headerBtnSp = Math.max(5.5f, 8.5f * headerScale);
+        int btnPadH = this.dpToPx(Math.max(3, Math.round(5.0f * headerScale)));
+        int btnPadV = this.dpToPx(Math.max(2, Math.round(3.0f * headerScale)));
+
         LinearLayout header = new LinearLayout((Context)this);
         header.setOrientation(0);
         header.setGravity(16);
-        header.setPadding(this.dpToPx(10), this.dpToPx(8), this.dpToPx(8), this.dpToPx(8));
+        header.setPadding(hPadH, hPadV, hPadH, hPadV);
         header.setBackgroundColor(0);
 
         List<DynamicOverlayRegistry.OverlayItemSpec> rawSpecs = DynamicOverlayRegistry.getActiveItems();
@@ -290,32 +299,31 @@ extends Service {
         }
         if (rawLogoBitmap != null) {
             ImageView headerLogoIv = new ImageView((Context)this);
-            headerLogoIv.setImageBitmap(this.createCircularBitmap(rawLogoBitmap, this.dpToPx(24)));
-            LinearLayout.LayoutParams logoLp = new LinearLayout.LayoutParams(this.dpToPx(24), this.dpToPx(24));
-            logoLp.rightMargin = this.dpToPx(8);
+            headerLogoIv.setImageBitmap(this.createCircularBitmap(rawLogoBitmap, this.dpToPx(logoDp)));
+            LinearLayout.LayoutParams logoLp = new LinearLayout.LayoutParams(this.dpToPx(logoDp), this.dpToPx(logoDp));
+            logoLp.rightMargin = logoMarginPx;
             header.addView((View)headerLogoIv, (ViewGroup.LayoutParams)logoLp);
         } else {
             TextView badgeCircle = new TextView((Context)this);
             badgeCircle.setText((CharSequence)"\u2726");
             badgeCircle.setTextColor(headerContentColor);
-            badgeCircle.setTextSize(2, 10.0f);
+            badgeCircle.setTextSize(2, Math.max(6.5f, 10.0f * headerScale));
             badgeCircle.setGravity(17);
             GradientDrawable circleDrawable = new GradientDrawable();
             circleDrawable.setShape(1);
             circleDrawable.setColor(useLightHeaderContent ? Color.parseColor((String)"#33FFFFFF") : Color.parseColor((String)"#1F0F172A"));
             circleDrawable.setStroke(this.dpToPx(1), headerContentColor);
             badgeCircle.setBackground((Drawable)circleDrawable);
-            LinearLayout.LayoutParams logoLp = new LinearLayout.LayoutParams(this.dpToPx(24), this.dpToPx(24));
-            logoLp.rightMargin = this.dpToPx(8);
+            LinearLayout.LayoutParams logoLp = new LinearLayout.LayoutParams(this.dpToPx(logoDp), this.dpToPx(logoDp));
+            logoLp.rightMargin = logoMarginPx;
             header.addView((View)badgeCircle, (ViewGroup.LayoutParams)logoLp);
         }
+        int titleAvailDp = Math.max(32, panelWidthDp - Math.round(115.0f * headerScale) - logoDp);
         TextView titleTv = new TextView((Context)this);
         titleTv.setText((CharSequence)displayTitle);
         titleTv.setTextColor(headerContentColor);
-        titleTv.setTextSize(2, 13.0f);
         titleTv.setTypeface(Typeface.DEFAULT_BOLD);
-        titleTv.setSingleLine(true);
-        titleTv.setEllipsize(TextUtils.TruncateAt.END);
+        this.configureAutoFitText(titleTv, displayTitle, 4.5f, 13.0f * headerScale, titleAvailDp, 24, 1);
         LinearLayout.LayoutParams titleLp = new LinearLayout.LayoutParams(0, -2, 1.0f);
         header.addView((View)titleTv, (ViewGroup.LayoutParams)titleLp);
         int bubbleSizePx = this.dpToPx(64);
@@ -336,11 +344,9 @@ extends Service {
             String fallbackBubbleText = displayTitle != null && !displayTitle.trim().isEmpty() ? displayTitle.trim() : "Float";
             bubbleTitleTv.setText((CharSequence)fallbackBubbleText);
             bubbleTitleTv.setTextColor(headerContentColor);
-            bubbleTitleTv.setTextSize(2, 10.0f);
             bubbleTitleTv.setTypeface(Typeface.DEFAULT_BOLD);
             bubbleTitleTv.setGravity(17);
-            bubbleTitleTv.setMaxLines(2);
-            bubbleTitleTv.setEllipsize(TextUtils.TruncateAt.END);
+            this.configureAutoFitText(bubbleTitleTv, fallbackBubbleText, 4.5f, 10.0f, 52, 42, 2);
             bubbleTitleTv.setPadding(this.dpToPx(6), this.dpToPx(4), this.dpToPx(6), this.dpToPx(4));
             goalLogoBubble.addView((View)bubbleTitleTv, (ViewGroup.LayoutParams)new FrameLayout.LayoutParams(-1, -1, 17));
         }
@@ -349,18 +355,19 @@ extends Service {
         TextView minimizeBtn = new TextView((Context)this);
         minimizeBtn.setText((CharSequence)"Minimize");
         minimizeBtn.setTextColor(headerContentColor);
-        minimizeBtn.setTextSize(2, 8.5f);
+        minimizeBtn.setTextSize(2, headerBtnSp);
         minimizeBtn.setTypeface(Typeface.DEFAULT_BOLD);
         minimizeBtn.setSingleLine(true);
+        minimizeBtn.setEllipsize(null);
         minimizeBtn.setGravity(17);
-        minimizeBtn.setPadding(this.dpToPx(5), this.dpToPx(3), this.dpToPx(5), this.dpToPx(3));
+        minimizeBtn.setPadding(btnPadH, btnPadV, btnPadH, btnPadV);
         GradientDrawable minBtnBg = new GradientDrawable();
         minBtnBg.setCornerRadius((float)this.dpToPx(6));
         minBtnBg.setColor(pillFillColor);
         minBtnBg.setStroke(this.dpToPx(1), headerContentColor);
         minimizeBtn.setBackground((Drawable)minBtnBg);
         LinearLayout.LayoutParams minBtnLp = new LinearLayout.LayoutParams(-2, -2);
-        minBtnLp.rightMargin = this.dpToPx(4);
+        minBtnLp.rightMargin = this.dpToPx(Math.max(2, Math.round(4.0f * headerScale)));
         minimizeBtn.setOnClickListener(v -> {
             this.setOverlayFocusable(false);
             panelRoot.setVisibility(8);
@@ -379,18 +386,19 @@ extends Service {
         TextView hideBtn = new TextView((Context)this);
         hideBtn.setText((CharSequence)"Hide");
         hideBtn.setTextColor(headerContentColor);
-        hideBtn.setTextSize(2, 8.5f);
+        hideBtn.setTextSize(2, headerBtnSp);
         hideBtn.setTypeface(Typeface.DEFAULT_BOLD);
         hideBtn.setSingleLine(true);
+        hideBtn.setEllipsize(null);
         hideBtn.setGravity(17);
-        hideBtn.setPadding(this.dpToPx(5), this.dpToPx(3), this.dpToPx(5), this.dpToPx(3));
+        hideBtn.setPadding(btnPadH, btnPadV, btnPadH, btnPadV);
         GradientDrawable hideBtnBg = new GradientDrawable();
         hideBtnBg.setCornerRadius((float)this.dpToPx(6));
         hideBtnBg.setColor(pillFillColor);
         hideBtnBg.setStroke(this.dpToPx(1), headerContentColor);
         hideBtn.setBackground((Drawable)hideBtnBg);
         LinearLayout.LayoutParams hideBtnLp = new LinearLayout.LayoutParams(-2, -2);
-        hideBtnLp.rightMargin = this.dpToPx(4);
+        hideBtnLp.rightMargin = this.dpToPx(Math.max(2, Math.round(4.0f * headerScale)));
         hideBtn.setOnClickListener(v -> {
             this.setOverlayFocusable(false);
             panelRoot.setVisibility(8);
@@ -410,11 +418,12 @@ extends Service {
         TextView killBtn = new TextView((Context)this);
         killBtn.setText((CharSequence)"Kill");
         killBtn.setTextColor(-1);
-        killBtn.setTextSize(2, 8.5f);
+        killBtn.setTextSize(2, headerBtnSp);
         killBtn.setTypeface(Typeface.DEFAULT_BOLD);
         killBtn.setSingleLine(true);
+        killBtn.setEllipsize(null);
         killBtn.setGravity(17);
-        killBtn.setPadding(this.dpToPx(6), this.dpToPx(3), this.dpToPx(6), this.dpToPx(3));
+        killBtn.setPadding(btnPadH, btnPadV, btnPadH, btnPadV);
         GradientDrawable killBtnBg = new GradientDrawable();
         killBtnBg.setCornerRadius((float)this.dpToPx(6));
         killBtnBg.setColor(Color.parseColor((String)"#D9EF4444"));
@@ -544,11 +553,15 @@ extends Service {
                     case 2: {
                         int dx = Math.round(event.getRawX() - this.downRawX);
                         int dy = Math.round(event.getRawY() - this.downRawY);
-                        int nextW = Math.max(FloatingDashboardService.this.dpToPx(170), Math.min(FloatingDashboardService.this.dpToPx(420), this.startW + dx));
-                        int nextH = Math.max(FloatingDashboardService.this.dpToPx(150), Math.min(FloatingDashboardService.this.dpToPx(600), this.startH + dy));
+                        int nextW = Math.max(FloatingDashboardService.this.dpToPx(140), Math.min(FloatingDashboardService.this.dpToPx(380), this.startW + dx));
+                        int nextH = Math.max(FloatingDashboardService.this.dpToPx(140), Math.min(FloatingDashboardService.this.dpToPx(540), this.startH + dy));
                         if (nextW != liveWinSizePx[0] || nextH != liveWinSizePx[1]) {
                             liveWinSizePx[0] = nextW;
                             liveWinSizePx[1] = nextH;
+                            float density = FloatingDashboardService.this.getResources().getDisplayMetrics().density;
+                            if (density > 0.0f) {
+                                DynamicOverlayRegistry.setActiveCanvasSizeDp(Math.round((float)nextW / density), Math.round((float)nextH / density));
+                            }
                             ViewGroup.LayoutParams rootLp = panelRoot.getLayoutParams();
                             if (rootLp != null) {
                                 rootLp.width = nextW;
@@ -1004,10 +1017,15 @@ extends Service {
         Drawable itemBg = this.createWidgetBackgroundDrawable(resolvedWidgetBgBmp, spec.widthDp, spec.heightDp, bgColor, customStrokePx, customStrokeColor);
         switch (type = spec.type != null ? spec.type : "BUTTON") {
             case "TOGGLE": {
+                int wDp = Math.max(48, spec.widthDp);
+                int hDp = Math.max(28, spec.heightDp);
+                float wScale = Math.max(0.55f, Math.min(1.0f, Math.min((float)wDp / 160.0f, (float)hDp / 38.0f)));
+                int padH = this.dpToPx(Math.max(4, Math.round(8.0f * wScale)));
+                int padV = this.dpToPx(Math.max(2, Math.round(4.0f * wScale)));
                 LinearLayout row = new LinearLayout((Context)this);
                 row.setOrientation(0);
                 row.setGravity(16);
-                row.setPadding(this.dpToPx(8), this.dpToPx(4), this.dpToPx(8), this.dpToPx(4));
+                row.setPadding(padH, padV, padH, padV);
                 // Start all toggle options OFF when the floating window first opens unless already turned ON in this session
                 spec.currentValue = "0";
                 boolean[] isCheckedState = new boolean[]{false};
@@ -1018,21 +1036,25 @@ extends Service {
                 TextView titleTv = new TextView((Context)this);
                 titleTv.setText((CharSequence)spec.label);
                 titleTv.setTextColor(txtColor);
-                titleTv.setTextSize(2, 11.0f);
                 titleTv.setTypeface(Typeface.DEFAULT_BOLD);
-                titleTv.setSingleLine(true);
+                int textAvailW = Math.max(24, wDp - Math.round(74.0f * wScale));
+                this.configureAutoFitText(titleTv, spec.label, 4.5f, 11.0f, textAvailW, hDp, 1);
                 textCol.addView((View)titleTv);
                 TextView onOffBadge = new TextView((Context)this);
-                onOffBadge.setTextSize(2, 9.0f);
+                onOffBadge.setTextSize(2, Math.max(6.0f, 9.0f * wScale));
                 onOffBadge.setTypeface(Typeface.DEFAULT_BOLD);
                 onOffBadge.setTextColor(-1);
-                onOffBadge.setPadding(this.dpToPx(5), this.dpToPx(2), this.dpToPx(5), this.dpToPx(2));
+                onOffBadge.setSingleLine(true);
+                onOffBadge.setEllipsize(null);
+                onOffBadge.setPadding(this.dpToPx(Math.max(3, Math.round(5.0f * wScale))), this.dpToPx(1), this.dpToPx(Math.max(3, Math.round(5.0f * wScale))), this.dpToPx(1));
                 LinearLayout.LayoutParams badgeLp = new LinearLayout.LayoutParams(-2, -2);
-                badgeLp.leftMargin = this.dpToPx(6);
-                badgeLp.rightMargin = this.dpToPx(4);
+                badgeLp.leftMargin = this.dpToPx(Math.max(2, Math.round(6.0f * wScale)));
+                badgeLp.rightMargin = this.dpToPx(Math.max(2, Math.round(4.0f * wScale)));
                 Switch toggleSwitch = new Switch((Context)this);
                 toggleSwitch.setShowText(false);
                 toggleSwitch.setChecked(false);
+                toggleSwitch.setScaleX(wScale);
+                toggleSwitch.setScaleY(wScale);
                 this.attachWidgetBorderAnimationIfConfigured(row, spec, resolvedWidgetBgBmp, bgColor, customStrokeColor);
                 Runnable updateVisuals = () -> {
                     boolean on = isCheckedState[0];
@@ -1099,10 +1121,11 @@ extends Service {
                 this.attachWidgetBorderAnimationIfConfigured(box, spec, resolvedWidgetBgBmp, bgColor, customStrokeColor);
                 final int maxVal = 100;
                 final TextView labelTv = new TextView((Context)this);
-                labelTv.setText((CharSequence)(spec.label + " (0-100): " + spec.currentValue));
+                String initSliderText = spec.label + " (0-100): " + spec.currentValue;
+                labelTv.setText((CharSequence)initSliderText);
                 labelTv.setTextColor(txtColor);
                 labelTv.setTypeface(Typeface.DEFAULT_BOLD);
-                labelTv.setTextSize(2, 11.0f);
+                this.configureAutoFitText(labelTv, initSliderText, 4.5f, 11.0f, Math.max(30, spec.widthDp - 16), Math.max(16, spec.heightDp / 2), 1);
                 SeekBar seekBar = new SeekBar((Context)this);
                 seekBar.setMax(maxVal);
                 int initProgress = 0;
@@ -1200,30 +1223,37 @@ extends Service {
             }
             case "LINK":
             case "IMAGE": {
+                int wDp = Math.max(48, spec.widthDp);
+                int hDp = Math.max(28, spec.heightDp);
+                float wScale = Math.max(0.55f, Math.min(1.0f, Math.min((float)wDp / 160.0f, (float)hDp / 38.0f)));
+                int padH = this.dpToPx(Math.max(4, Math.round(10.0f * wScale)));
+                int padV = this.dpToPx(Math.max(2, Math.round(4.0f * wScale)));
                 LinearLayout linkRow = new LinearLayout((Context)this);
                 linkRow.setOrientation(0);
                 linkRow.setGravity(16);
-                linkRow.setPadding(this.dpToPx(10), this.dpToPx(4), this.dpToPx(10), this.dpToPx(4));
+                linkRow.setPadding(padH, padV, padH, padV);
                 linkRow.setBackground(this.createWidgetBackgroundDrawable(resolvedWidgetBgBmp, spec.widthDp, spec.heightDp, bgColor, customStrokePx, customStrokeColor));
                 this.attachWidgetBorderAnimationIfConfigured(linkRow, spec, resolvedWidgetBgBmp, bgColor, customStrokeColor);
                 TextView iconTv = new TextView((Context)this);
                 iconTv.setText((CharSequence)"\ud83c\udf10");
-                iconTv.setTextSize(2, 12.0f);
+                iconTv.setTextSize(2, Math.max(8.0f, 12.0f * wScale));
                 LinearLayout.LayoutParams iconLp = new LinearLayout.LayoutParams(-2, -2);
-                iconLp.rightMargin = this.dpToPx(6);
+                iconLp.rightMargin = this.dpToPx(Math.max(3, Math.round(6.0f * wScale)));
                 TextView labelTv = new TextView((Context)this);
                 labelTv.setText((CharSequence)spec.label);
                 labelTv.setTextColor(txtColor);
-                labelTv.setTextSize(2, 12.0f);
                 labelTv.setTypeface(Typeface.DEFAULT_BOLD);
-                labelTv.setSingleLine(true);
+                int textAvailW = Math.max(24, wDp - Math.round(64.0f * wScale));
+                this.configureAutoFitText(labelTv, spec.label, 4.5f, 12.0f, textAvailW, hDp, 1);
                 LinearLayout.LayoutParams labelLp = new LinearLayout.LayoutParams(0, -2, 1.0f);
                 TextView openBadge = new TextView((Context)this);
                 openBadge.setText((CharSequence)"OPEN \u2197");
                 openBadge.setTextColor(-1);
-                openBadge.setTextSize(2, 9.0f);
+                openBadge.setTextSize(2, Math.max(6.0f, 9.0f * wScale));
                 openBadge.setTypeface(Typeface.DEFAULT_BOLD);
-                openBadge.setPadding(this.dpToPx(7), this.dpToPx(2), this.dpToPx(7), this.dpToPx(2));
+                openBadge.setSingleLine(true);
+                openBadge.setEllipsize(null);
+                openBadge.setPadding(this.dpToPx(Math.max(4, Math.round(7.0f * wScale))), this.dpToPx(1), this.dpToPx(Math.max(4, Math.round(7.0f * wScale))), this.dpToPx(1));
                 GradientDrawable badgeBg = new GradientDrawable();
                 badgeBg.setColor(Color.parseColor((String)"#0288D1"));
                 badgeBg.setCornerRadius((float)this.dpToPx(99));
@@ -1244,13 +1274,16 @@ extends Service {
                 return linkRow;
             }
             case "TEXT": {
+                int wDp = Math.max(48, spec.widthDp);
+                int hDp = Math.max(28, spec.heightDp);
                 TextView tv = new TextView((Context)this);
                 tv.setText((CharSequence)spec.label);
                 tv.setTextColor(txtColor);
-                tv.setTextSize(2, 12.0f);
                 tv.setTypeface(Typeface.DEFAULT_BOLD);
                 tv.setGravity(16);
-                tv.setPadding(this.dpToPx(8), this.dpToPx(4), this.dpToPx(8), this.dpToPx(4));
+                int padH = this.dpToPx(Math.max(4, Math.min(8, wDp / 14)));
+                tv.setPadding(padH, this.dpToPx(2), padH, this.dpToPx(2));
+                this.configureAutoFitText(tv, spec.label, 4.5f, 12.0f, Math.max(24, wDp - 12), hDp, 1);
                 tv.setBackground(itemBg);
                 this.attachWidgetBorderAnimationIfConfigured(tv, spec, resolvedWidgetBgBmp, bgColor, customStrokeColor);
                 // TextView is strictly for displaying text — no file replacement on click!
@@ -1259,23 +1292,30 @@ extends Service {
         }
         spec.currentValue = "0";
         boolean[] isBtnOn = new boolean[]{false};
+        int wDp = Math.max(48, spec.widthDp);
+        int hDp = Math.max(28, spec.heightDp);
+        float wScale = Math.max(0.55f, Math.min(1.0f, Math.min((float)wDp / 160.0f, (float)hDp / 38.0f)));
+        int padH = this.dpToPx(Math.max(4, Math.round(10.0f * wScale)));
+        int padV = this.dpToPx(Math.max(2, Math.round(4.0f * wScale)));
         LinearLayout btnRow = new LinearLayout((Context)this);
         btnRow.setOrientation(0);
         btnRow.setGravity(16);
-        btnRow.setPadding(this.dpToPx(10), this.dpToPx(4), this.dpToPx(10), this.dpToPx(4));
+        btnRow.setPadding(padH, padV, padH, padV);
         TextView labelTv = new TextView((Context)this);
         labelTv.setText((CharSequence)spec.label);
-        labelTv.setTextSize(2, 12.0f);
         labelTv.setTypeface(Typeface.DEFAULT_BOLD);
-        labelTv.setSingleLine(true);
+        int textAvailW = Math.max(24, wDp - Math.round(52.0f * wScale));
+        this.configureAutoFitText(labelTv, spec.label, 4.5f, 12.0f, textAvailW, hDp, 1);
         LinearLayout.LayoutParams labelLp = new LinearLayout.LayoutParams(0, -2, 1.0f);
         TextView pillBadge = new TextView((Context)this);
         pillBadge.setTextColor(-1);
-        pillBadge.setTextSize(2, 10.0f);
+        pillBadge.setTextSize(2, Math.max(6.0f, 10.0f * wScale));
         pillBadge.setTypeface(Typeface.DEFAULT_BOLD);
-        pillBadge.setPadding(this.dpToPx(8), this.dpToPx(2), this.dpToPx(8), this.dpToPx(2));
+        pillBadge.setSingleLine(true);
+        pillBadge.setEllipsize(null);
+        pillBadge.setPadding(this.dpToPx(Math.max(4, Math.round(8.0f * wScale))), this.dpToPx(1), this.dpToPx(Math.max(4, Math.round(8.0f * wScale))), this.dpToPx(1));
         LinearLayout.LayoutParams pillLp = new LinearLayout.LayoutParams(-2, -2);
-        pillLp.leftMargin = this.dpToPx(6);
+        pillLp.leftMargin = this.dpToPx(Math.max(2, Math.round(6.0f * wScale)));
         this.attachWidgetBorderAnimationIfConfigured(btnRow, spec, resolvedWidgetBgBmp, bgColor, customStrokeColor);
         Runnable updateBtnVisuals = () -> {
             boolean on = isBtnOn[0];
@@ -1456,6 +1496,33 @@ extends Service {
     @Nullable
     public IBinder onBind(Intent intent) {
         return null;
+    }
+
+    private void configureAutoFitText(TextView tv, String text, float minSp, float maxSp, int availWidthDp, int availHeightDp, int maxLines) {
+        if (tv == null) {
+            return;
+        }
+        String safe = text != null ? text : "";
+        int len = Math.max(1, safe.length());
+        float charFactor = maxLines > 1 ? 0.35f : 0.58f;
+        float byW = (float)Math.max(20, availWidthDp) / ((float)len * charFactor);
+        float byH = (float)Math.max(16, availHeightDp) * (maxLines > 1 ? 0.34f : 0.48f);
+        float computedSp = Math.max(minSp, Math.min(maxSp, Math.min(byW, byH)));
+        tv.setMaxLines(maxLines);
+        if (maxLines == 1) {
+            tv.setSingleLine(true);
+        }
+        tv.setEllipsize(null);
+        tv.setTextSize(2, computedSp);
+        if (Build.VERSION.SDK_INT >= 26) {
+            try {
+                int minInt = Math.max(4, Math.round(minSp));
+                int maxInt = Math.max(minInt + 1, Math.round(maxSp));
+                tv.setAutoSizeTextTypeUniformWithConfiguration(minInt, maxInt, 1, 2);
+            }
+            catch (Throwable ignored) {
+            }
+        }
     }
 
     private void createNotificationChannel() {

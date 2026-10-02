@@ -66,6 +66,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
@@ -166,6 +167,9 @@ fun CompiledStandaloneAppScreen(
     }
 
     val effectiveFloatingRunning = isOverlayRunning || FloatingDashboardService.isRunning()
+    var localStartStopToggled by remember(effectiveFloatingRunning) {
+        mutableStateOf(effectiveFloatingRunning)
+    }
 
     Surface(
         modifier = Modifier.fillMaxSize(),
@@ -502,9 +506,15 @@ fun CompiledStandaloneAppScreen(
                     }
                 }
 
-                // SCREEN 1 CUSTOM MAIN SCREEN WIDGETS + START / STOP
+                // SCREEN 1 CUSTOM MAIN SCREEN WIDGETS + UNIFIED START / STOP TOGGLE
                 val screen1Widgets = remember(initialComponents) {
-                    initialComponents.filter { isScreen1WidgetType(it.type) }
+                    val allS1 = initialComponents.filter { isScreen1WidgetType(it.type) }
+                    val hasStart = allS1.any { it.type.equals("S1_START", ignoreCase = true) }
+                    if (hasStart) {
+                        allS1.filterNot { it.type.equals("S1_STOP", ignoreCase = true) }
+                    } else {
+                        allS1
+                    }
                 }
                 val hasCustomStartOrStop = remember(screen1Widgets) {
                     screen1Widgets.any {
@@ -535,11 +545,14 @@ fun CompiledStandaloneAppScreen(
                             ) {
                                 screen1Widgets.forEach { comp ->
                                     val typeUpper = comp.type.trim().uppercase()
+                                    val isStartOrStopBtn = typeUpper == "S1_START" || typeUpper == "S1_STOP"
                                     val isTextOrLink = typeUpper == "S1_TEXT" || typeUpper == "S1_LINK"
                                     val isImageWidget = typeUpper == "S1_IMAGE"
+                                    val isCurrentlyRunningState = localStartStopToggled || effectiveFloatingRunning
 
                                     val widgetBgColor = when {
                                         isTextOrLink || isImageWidget -> Color.Transparent
+                                        isStartOrStopBtn && isCurrentlyRunningState -> Color(0xFFEF4444)
                                         else -> parseHexColorSafe(comp.bgColorHex, Color(0xFF10B981))
                                     }
                                     val widgetTextColor = if (isTextOrLink) {
@@ -572,19 +585,24 @@ fun CompiledStandaloneAppScreen(
                                             )
                                             .clip(RoundedCornerShape(10.dp))
                                             .background(widgetBgColor)
-                                            .clickable(enabled = typeUpper == "S1_START" || typeUpper == "S1_STOP" || typeUpper == "S1_LINK") {
+                                            .clickable(enabled = isStartOrStopBtn || typeUpper == "S1_LINK") {
                                                 when (typeUpper) {
-                                                    "S1_START" -> {
-                                                        if (!hasStoragePermission && !ShizukuPrivilegeBridge.isShizukuReady()) {
-                                                            requestStorageAction()
-                                                        } else if (!hasOverlayPermission) {
-                                                            requestFloatPermissionAction()
+                                                    "S1_START", "S1_STOP" -> {
+                                                        if (isCurrentlyRunningState) {
+                                                            // Pressing Stop stops the service and switches button back to Start
+                                                            localStartStopToggled = false
+                                                            onStopOverlay()
                                                         } else {
-                                                            onStartOverlay()
+                                                            // Pressing Start starts the service and switches button to Stop
+                                                            if (!hasStoragePermission && !ShizukuPrivilegeBridge.isShizukuReady()) {
+                                                                requestStorageAction()
+                                                            } else if (!hasOverlayPermission) {
+                                                                requestFloatPermissionAction()
+                                                            } else {
+                                                                localStartStopToggled = true
+                                                                onStartOverlay()
+                                                            }
                                                         }
-                                                    }
-                                                    "S1_STOP" -> {
-                                                        onStopOverlay()
                                                     }
                                                     "S1_LINK" -> {
                                                         val rawUrl = comp.linkUrl.trim()
@@ -614,58 +632,81 @@ fun CompiledStandaloneAppScreen(
                                     ) {
                                         when (typeUpper) {
                                             "S1_START", "S1_STOP" -> {
+                                                val displayBtnText = if (isCurrentlyRunningState) {
+                                                    comp.offPayloadHex.ifBlank { "STOP SERVICE" }
+                                                } else {
+                                                    comp.label.ifBlank { "START SERVICE" }
+                                                }
                                                 if (bgBitmap != null) {
                                                     Image(
                                                         bitmap = bgBitmap,
-                                                        contentDescription = comp.label,
+                                                        contentDescription = displayBtnText,
                                                         contentScale = ContentScale.Crop,
                                                         modifier = Modifier
                                                             .fillMaxSize()
                                                             .clip(RoundedCornerShape(10.dp))
                                                     )
                                                 }
-                                                Box(
+                                                val wDp = comp.widthDp.coerceIn(50, 270).toFloat()
+                                                val hDp = comp.heightDp.coerceIn(28, 260).toFloat()
+                                                val iconDp = (minOf(hDp * 0.48f, wDp * 0.22f)).coerceIn(13f, 18f)
+                                                Row(
                                                     modifier = Modifier
                                                         .fillMaxSize()
-                                                        .padding(horizontal = 10.dp),
-                                                    contentAlignment = Alignment.Center
+                                                        .padding(horizontal = (wDp * 0.05f).coerceIn(4f, 10f).dp),
+                                                    verticalAlignment = Alignment.CenterVertically,
+                                                    horizontalArrangement = Arrangement.Center
                                                 ) {
-                                                    Text(
-                                                        text = comp.label,
+                                                    Icon(
+                                                        imageVector = if (isCurrentlyRunningState) Icons.Default.Stop else Icons.Default.PlayArrow,
+                                                        contentDescription = null,
+                                                        tint = widgetTextColor,
+                                                        modifier = Modifier.size(iconDp.dp)
+                                                    )
+                                                    Spacer(Modifier.width((wDp * 0.04f).coerceIn(3f, 6f).dp))
+                                                    AutoFitText(
+                                                        text = displayBtnText,
                                                         color = widgetTextColor,
-                                                        fontSize = 14.sp,
+                                                        maxFontSizeSp = 14f,
+                                                        minFontSizeSp = 4.5f,
+                                                        availableWidthDp = (wDp - iconDp - 14f).coerceAtLeast(24f),
+                                                        availableHeightDp = hDp,
                                                         fontWeight = FontWeight.ExtraBold,
-                                                        maxLines = 1,
-                                                        overflow = TextOverflow.Ellipsis,
                                                         textAlign = TextAlign.Center
                                                     )
                                                 }
                                             }
 
                                             "S1_TEXT" -> {
+                                                val wDp = comp.widthDp.coerceIn(50, 270).toFloat()
+                                                val hDp = comp.heightDp.coerceIn(28, 260).toFloat()
                                                 Box(
                                                     modifier = Modifier
                                                         .fillMaxSize()
-                                                        .padding(horizontal = 8.dp),
+                                                        .padding(horizontal = (wDp * 0.05f).coerceIn(4f, 8f).dp),
                                                     contentAlignment = Alignment.Center
                                                 ) {
-                                                    Text(
+                                                    AutoFitText(
                                                         text = comp.label,
                                                         color = widgetTextColor,
-                                                        fontSize = 14.sp,
+                                                        maxFontSizeSp = 14f,
+                                                        minFontSizeSp = 4.5f,
+                                                        availableWidthDp = (wDp - 12f).coerceAtLeast(24f),
+                                                        availableHeightDp = hDp,
                                                         fontWeight = FontWeight.Bold,
-                                                        maxLines = 2,
-                                                        overflow = TextOverflow.Ellipsis,
                                                         textAlign = TextAlign.Center
                                                     )
                                                 }
                                             }
 
                                             "S1_LINK" -> {
+                                                val wDp = comp.widthDp.coerceIn(50, 270).toFloat()
+                                                val hDp = comp.heightDp.coerceIn(28, 260).toFloat()
+                                                val logoDp = (minOf(hDp * 0.52f, wDp * 0.22f)).coerceIn(13f, 24f)
                                                 Row(
                                                     modifier = Modifier
                                                         .fillMaxSize()
-                                                        .padding(horizontal = 10.dp),
+                                                        .padding(horizontal = (wDp * 0.05f).coerceIn(4f, 10f).dp),
                                                     verticalAlignment = Alignment.CenterVertically,
                                                     horizontalArrangement = Arrangement.Center
                                                 ) {
@@ -675,18 +716,19 @@ fun CompiledStandaloneAppScreen(
                                                             contentDescription = "Link Side Logo",
                                                             contentScale = ContentScale.Crop,
                                                             modifier = Modifier
-                                                                .size(24.dp)
+                                                                .size(logoDp.dp)
                                                                 .clip(RoundedCornerShape(6.dp))
                                                         )
-                                                        Spacer(Modifier.width(8.dp))
+                                                        Spacer(Modifier.width((wDp * 0.04f).coerceIn(3f, 8f).dp))
                                                     }
-                                                    Text(
+                                                    AutoFitText(
                                                         text = comp.label,
                                                         color = widgetTextColor,
-                                                        fontSize = 13.sp,
-                                                        fontWeight = FontWeight.Bold,
-                                                        maxLines = 1,
-                                                        overflow = TextOverflow.Ellipsis
+                                                        maxFontSizeSp = 13f,
+                                                        minFontSizeSp = 4.5f,
+                                                        availableWidthDp = (wDp - (if (customBitmap != null) logoDp + 16f else 12f)).coerceAtLeast(24f),
+                                                        availableHeightDp = hDp,
+                                                        fontWeight = FontWeight.Bold
                                                     )
                                                 }
                                             }
@@ -711,8 +753,9 @@ fun CompiledStandaloneAppScreen(
                     }
                 }
 
-                // Default START / STOP fallback card (shown if user didn't add custom S1_START / S1_STOP buttons)
+                // Default Single START / STOP toggle fallback card (shown if user didn't add a custom S1_START button)
                 if (!hasCustomStartOrStop) {
+                val isCurrentlyRunningState = localStartStopToggled || effectiveFloatingRunning
                 Card(
                     shape = RoundedCornerShape(18.dp),
                     colors = CardDefaults.cardColors(containerColor = Color(0xFF151F34)),
@@ -725,71 +768,43 @@ fun CompiledStandaloneAppScreen(
                             .padding(18.dp),
                         verticalArrangement = Arrangement.spacedBy(14.dp)
                     ) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(12.dp)
-                        ) {
-                            // START BUTTON
-                            Button(
-                                onClick = {
+                        Button(
+                            onClick = {
+                                if (isCurrentlyRunningState) {
+                                    localStartStopToggled = false
+                                    onStopOverlay()
+                                } else {
                                     if (!hasStoragePermission && !ShizukuPrivilegeBridge.isShizukuReady()) {
                                         requestStorageAction()
                                     } else if (!hasOverlayPermission) {
                                         requestFloatPermissionAction()
                                     } else {
+                                        localStartStopToggled = true
                                         onStartOverlay()
                                     }
-                                },
-                                colors = ButtonDefaults.buttonColors(
-                                    containerColor = Color(0xFF10B981),
-                                    contentColor = Color.White
-                                ),
-                                shape = RoundedCornerShape(14.dp),
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .height(56.dp)
-                                    .testTag("standalone_start_overlay_button")
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.PlayArrow,
-                                    contentDescription = "Start Floating Window",
-                                    modifier = Modifier.size(22.dp)
-                                )
-                                Spacer(Modifier.width(6.dp))
-                                Text(
-                                    text = "START",
-                                    fontSize = 15.sp,
-                                    fontWeight = FontWeight.ExtraBold
-                                )
-                            }
-
-                            // STOP BUTTON
-                            Button(
-                                onClick = {
-                                    onStopOverlay()
-                                },
-                                colors = ButtonDefaults.buttonColors(
-                                    containerColor = Color(0xFFEF4444),
-                                    contentColor = Color.White
-                                ),
-                                shape = RoundedCornerShape(14.dp),
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .height(56.dp)
-                                    .testTag("standalone_stop_overlay_button")
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Stop,
-                                    contentDescription = "Stop Floating Window",
-                                    modifier = Modifier.size(22.dp)
-                                )
-                                Spacer(Modifier.width(6.dp))
-                                Text(
-                                    text = "STOP",
-                                    fontSize = 15.sp,
-                                    fontWeight = FontWeight.ExtraBold
-                                )
-                            }
+                                }
+                            },
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = if (isCurrentlyRunningState) Color(0xFFEF4444) else Color(0xFF10B981),
+                                contentColor = Color.White
+                            ),
+                            shape = RoundedCornerShape(14.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(56.dp)
+                                .testTag("standalone_start_overlay_button")
+                        ) {
+                            Icon(
+                                imageVector = if (isCurrentlyRunningState) Icons.Default.Stop else Icons.Default.PlayArrow,
+                                contentDescription = if (isCurrentlyRunningState) "Stop Floating Window" else "Start Floating Window",
+                                modifier = Modifier.size(22.dp)
+                            )
+                            Spacer(Modifier.width(8.dp))
+                            Text(
+                                text = if (isCurrentlyRunningState) "STOP SERVICE" else "START SERVICE",
+                                fontSize = 15.sp,
+                                fontWeight = FontWeight.ExtraBold
+                            )
                         }
 
                         Surface(
@@ -925,14 +940,16 @@ private fun StandaloneDraggableFloatingWindow(
                             .clip(CircleShape)
                     )
                 } else {
-                    Text(
+                    AutoFitText(
                         text = resolvedPanelTitle,
                         color = Color.White,
-                        fontSize = 10.sp,
+                        maxFontSizeSp = 10f,
+                        minFontSizeSp = 4.5f,
+                        availableWidthDp = 58f,
+                        availableHeightDp = 42f,
                         fontWeight = FontWeight.ExtraBold,
                         textAlign = TextAlign.Center,
                         maxLines = 2,
-                        overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.padding(4.dp)
                     )
                 }
@@ -943,8 +960,8 @@ private fun StandaloneDraggableFloatingWindow(
                 colors = CardDefaults.cardColors(containerColor = canvasBg),
                 elevation = CardDefaults.cardElevation(defaultElevation = 14.dp),
                 modifier = Modifier.size(
-                    width = project.canvasWidthDp.dp.coerceIn(180.dp, 340.dp),
-                    height = project.canvasHeightDp.dp.coerceIn(180.dp, 480.dp)
+                    width = project.canvasWidthDp.dp.coerceIn(140.dp, 380.dp),
+                    height = project.canvasHeightDp.dp.coerceIn(140.dp, 540.dp)
                 )
             ) {
                 Box(
@@ -963,22 +980,33 @@ private fun StandaloneDraggableFloatingWindow(
                     }
 
                     Column(modifier = Modifier.fillMaxSize()) {
+                        val panelWidthF = project.canvasWidthDp.toFloat().coerceIn(140f, 380f)
+                        val panelScale = (panelWidthF / 260f).coerceIn(0.54f, 1.0f)
+                        val logoDp = (24f * panelScale).coerceIn(13f, 24f)
+                        val btnFontSp = (8.5f * panelScale).coerceIn(5.5f, 8.5f)
+                        val btnHPad = (5f * panelScale).coerceIn(2.5f, 5f).dp
+                        val btnVPad = (2.5f * panelScale).coerceIn(1.5f, 2.5f).dp
+                        val titleAvailW = (panelWidthF - 115f * panelScale - logoDp).coerceAtLeast(32f)
+
                         // Header Bar matching Studio Preview with Minimize & Hide buttons
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(horizontal = 10.dp, vertical = 8.dp),
+                                .padding(
+                                    horizontal = (10f * panelScale).coerceIn(4f, 10f).dp,
+                                    vertical = (8f * panelScale).coerceIn(4f, 8f).dp
+                                ),
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                horizontalArrangement = Arrangement.spacedBy((8f * panelScale).coerceIn(3f, 8f).dp),
                                 modifier = Modifier.weight(1f)
                             ) {
                                 Box(
                                     modifier = Modifier
-                                        .size(24.dp)
+                                        .size(logoDp.dp)
                                         .clip(CircleShape)
                                         .background(headerContentColor.copy(alpha = 0.15f))
                                         .border(BorderStroke(1.dp, headerContentColor.copy(alpha = 0.5f)), CircleShape),
@@ -997,24 +1025,26 @@ private fun StandaloneDraggableFloatingWindow(
                                         Text(
                                             text = "✦",
                                             color = headerContentColor,
-                                            fontSize = 10.sp,
+                                            fontSize = (10f * panelScale).coerceIn(6f, 10f).sp,
                                             fontWeight = FontWeight.Bold
                                         )
                                     }
                                 }
-                                Text(
+                                AutoFitText(
                                     text = resolvedPanelTitle,
                                     color = headerContentColor,
-                                    fontSize = 13.sp,
+                                    maxFontSizeSp = 13f,
+                                    minFontSizeSp = 4.5f,
+                                    availableWidthDp = titleAvailW,
+                                    availableHeightDp = 24f,
                                     fontWeight = FontWeight.Bold,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
+                                    modifier = Modifier.weight(1f)
                                 )
                             }
 
                             Row(
                                 verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(3.dp)
+                                horizontalArrangement = Arrangement.spacedBy((3f * panelScale).coerceIn(1.5f, 3f).dp)
                             ) {
                                 Surface(
                                     shape = RoundedCornerShape(6.dp),
@@ -1027,11 +1057,11 @@ private fun StandaloneDraggableFloatingWindow(
                                     Text(
                                         text = "Minimize",
                                         color = headerContentColor,
-                                        fontSize = 8.5.sp,
+                                        fontSize = btnFontSp.sp,
                                         fontWeight = FontWeight.Bold,
                                         maxLines = 1,
                                         softWrap = false,
-                                        modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.5.dp)
+                                        modifier = Modifier.padding(horizontal = btnHPad, vertical = btnVPad)
                                     )
                                 }
 
@@ -1046,11 +1076,11 @@ private fun StandaloneDraggableFloatingWindow(
                                     Text(
                                         text = "Hide",
                                         color = headerContentColor,
-                                        fontSize = 8.5.sp,
+                                        fontSize = btnFontSp.sp,
                                         fontWeight = FontWeight.Bold,
                                         maxLines = 1,
                                         softWrap = false,
-                                        modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.5.dp)
+                                        modifier = Modifier.padding(horizontal = btnHPad, vertical = btnVPad)
                                     )
                                 }
 
@@ -1068,11 +1098,11 @@ private fun StandaloneDraggableFloatingWindow(
                                     Text(
                                         text = "Kill",
                                         color = Color.White,
-                                        fontSize = 8.5.sp,
+                                        fontSize = btnFontSp.sp,
                                         fontWeight = FontWeight.Bold,
                                         maxLines = 1,
                                         softWrap = false,
-                                        modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.5.dp)
+                                        modifier = Modifier.padding(horizontal = btnHPad, vertical = btnVPad)
                                     )
                                 }
                             }
@@ -1166,21 +1196,30 @@ private fun StandaloneDraggableFloatingWindow(
                                                 .clip(RoundedCornerShape(8.dp))
                                         )
                                     }
+                                    val wDp = comp.widthDp.toFloat().coerceAtLeast(48f)
+                                    val hDp = comp.heightDp.toFloat().coerceAtLeast(28f)
+                                    val switchScale = (minOf(wDp / 150f, hDp / 38f)).coerceIn(0.52f, 0.9f)
+                                    val textAvailW = (wDp - (if (isToggle) 44f * switchScale else 10f)).coerceAtLeast(22f)
+                                    val hasSecondLine = comp.type == "SLIDER" || comp.type == "INPUT" || comp.type == "TEXT"
                                     Row(
                                         modifier = Modifier
                                             .fillMaxSize()
-                                            .padding(horizontal = 8.dp),
+                                            .padding(horizontal = (wDp * 0.05f).coerceIn(3f, 8f).dp),
                                         horizontalArrangement = Arrangement.SpaceBetween,
                                         verticalAlignment = Alignment.CenterVertically
                                     ) {
-                                        Column(modifier = Modifier.weight(1f)) {
-                                            Text(
+                                        Column(
+                                            modifier = Modifier.weight(1f),
+                                            verticalArrangement = Arrangement.Center
+                                        ) {
+                                            AutoFitText(
                                                 text = comp.label,
                                                 color = widgetText,
-                                                fontSize = 11.sp,
-                                                fontWeight = FontWeight.Bold,
-                                                maxLines = 1,
-                                                overflow = TextOverflow.Ellipsis
+                                                maxFontSizeSp = 11f,
+                                                minFontSizeSp = 4.5f,
+                                                availableWidthDp = textAvailW,
+                                                availableHeightDp = if (hasSecondLine) hDp * 0.5f else hDp,
+                                                fontWeight = FontWeight.Bold
                                             )
                                             if (comp.type == "SLIDER") {
                                                 val sliderVal = (comp.currentValue.toFloatOrNull() ?: 50f)
@@ -1191,25 +1230,33 @@ private fun StandaloneDraggableFloatingWindow(
                                                         onTriggerComponent(comp, v.roundToInt().toString())
                                                     },
                                                     valueRange = 0f..comp.sliderMax.toFloat().coerceAtLeast(1f),
-                                                    modifier = Modifier.height(22.dp)
+                                                    modifier = Modifier.height((hDp * 0.45f).coerceIn(14f, 22f).dp)
                                                 )
                                             } else if (comp.type == "INPUT" || comp.type == "TEXT") {
-                                                Text(
+                                                AutoFitText(
                                                     text = comp.currentValue,
                                                     color = widgetText.copy(alpha = 0.85f),
-                                                    fontSize = 10.sp,
-                                                    fontFamily = FontFamily.Monospace,
-                                                    maxLines = 1
+                                                    maxFontSizeSp = 10f,
+                                                    minFontSizeSp = 4.5f,
+                                                    availableWidthDp = textAvailW,
+                                                    availableHeightDp = hDp * 0.45f,
+                                                    fontWeight = FontWeight.Medium,
+                                                    fontFamily = FontFamily.Monospace
                                                 )
                                             }
                                         }
                                         if (isToggle) {
-                                            Switch(
-                                                checked = isChecked,
-                                                onCheckedChange = { checked ->
-                                                    onTriggerComponent(comp, if (checked) "1" else "0")
-                                                }
-                                            )
+                                            Box(
+                                                modifier = Modifier.scale(switchScale),
+                                                contentAlignment = Alignment.CenterEnd
+                                            ) {
+                                                Switch(
+                                                    checked = isChecked,
+                                                    onCheckedChange = { checked ->
+                                                        onTriggerComponent(comp, if (checked) "1" else "0")
+                                                    }
+                                                )
+                                            }
                                         }
                                     }
                                 }

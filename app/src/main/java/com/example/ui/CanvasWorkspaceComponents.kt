@@ -41,6 +41,8 @@ import androidx.compose.material.icons.filled.CheckBox
 import androidx.compose.material.icons.filled.CreditCard
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Fullscreen
+import androidx.compose.material.icons.filled.FullscreenExit
 import androidx.compose.material.icons.filled.HorizontalDistribute
 import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Input
@@ -85,6 +87,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -145,6 +148,50 @@ private data class LeftPaletteItemSpec(
     val iconTint: Color,
     val tagSlug: String
 )
+
+@Composable
+fun AutoFitText(
+    text: String,
+    color: Color,
+    maxFontSizeSp: Float,
+    minFontSizeSp: Float = 4.5f,
+    availableWidthDp: Float = 160f,
+    availableHeightDp: Float = 42f,
+    fontWeight: FontWeight = FontWeight.Bold,
+    fontFamily: FontFamily? = null,
+    textAlign: TextAlign? = null,
+    maxLines: Int = 1,
+    modifier: Modifier = Modifier
+) {
+    val safeLen = text.length.coerceAtLeast(1)
+    val charWidthFactor = if (maxLines > 1) 0.34f else 0.58f
+    val estByWidth = (availableWidthDp / (safeLen * charWidthFactor)).coerceIn(minFontSizeSp, maxFontSizeSp)
+    val estByHeight = (availableHeightDp * (if (maxLines > 1) 0.32f else 0.48f)).coerceIn(minFontSizeSp, maxFontSizeSp)
+    val initialSp = minOf(maxFontSizeSp, estByWidth, estByHeight).coerceIn(minFontSizeSp, maxFontSizeSp)
+
+    var fittedSp by remember(text, availableWidthDp.roundToInt(), availableHeightDp.roundToInt(), maxFontSizeSp) {
+        mutableFloatStateOf(initialSp)
+    }
+
+    Text(
+        text = text,
+        color = color,
+        fontSize = fittedSp.sp,
+        lineHeight = (fittedSp * 1.12f).sp,
+        fontWeight = fontWeight,
+        fontFamily = fontFamily,
+        textAlign = textAlign,
+        maxLines = maxLines,
+        softWrap = maxLines > 1,
+        overflow = TextOverflow.Clip,
+        onTextLayout = { result ->
+            if ((result.didOverflowWidth || result.didOverflowHeight) && fittedSp > minFontSizeSp) {
+                fittedSp = (fittedSp * 0.88f).coerceAtLeast(minFontSizeSp)
+            }
+        },
+        modifier = modifier
+    )
+}
 
 @Composable
 fun ComponentTrackerBanner(
@@ -224,6 +271,8 @@ fun SketchwareStudioSplitWorkspace(
     isLivePreviewMode: Boolean,
     statusToast: String,
     activePreviewScreen: Int = 2,
+    isPreviewFullScreen: Boolean = false,
+    onTogglePreviewFullScreen: () -> Unit = {},
     onAddPaletteEntry: (SketchwarePaletteEntry) -> Unit,
     onSelectComponent: (Long?) -> Unit,
     onMoveComponent: (CanvasComponentEntity, Int, Int) -> Unit,
@@ -249,13 +298,15 @@ fun SketchwareStudioSplitWorkspace(
     val latestOnResizeComponent by rememberUpdatedState(onResizeComponent)
 
     Row(modifier = modifier.fillMaxSize()) {
-        // LEFT SIDE WIDGET PALETTE (Switches between Screen 1 and Screen 2 widgets)
-        LeftSideWidgetPalette(
-            activePreviewScreen = activePreviewScreen,
-            isAutoFixSize = project.autoFixSize,
-            onSelectPaletteEntry = onAddPaletteEntry,
-            onToggleAutoFixSize = onToggleAutoFixSize
-        )
+        // LEFT SIDE WIDGET PALETTE (Hidden when Preview is in Full Screen mode so Preview fills the screen)
+        if (!isPreviewFullScreen) {
+            LeftSideWidgetPalette(
+                activePreviewScreen = activePreviewScreen,
+                isAutoFixSize = project.autoFixSize,
+                onSelectPaletteEntry = onAddPaletteEntry,
+                onToggleAutoFixSize = onToggleAutoFixSize
+            )
+        }
 
         if (activePreviewScreen == 1) {
             // PREVIEW 1: MAIN SCREEN EDITOR (Start/Stop, TextView, Link Open, ImageView + Fix Dhanche + Corner Resize)
@@ -263,6 +314,8 @@ fun SketchwareStudioSplitWorkspace(
                 project = project,
                 components = screen1Components,
                 selectedComponentId = selectedComponentId,
+                isPreviewFullScreen = isPreviewFullScreen,
+                onTogglePreviewFullScreen = onTogglePreviewFullScreen,
                 onSelectComponent = onSelectComponent,
                 onMoveComponent = { id, newX, newY ->
                     latestScreen1Components.find { it.id == id }?.let { comp ->
@@ -279,11 +332,13 @@ fun SketchwareStudioSplitWorkspace(
                     .fillMaxHeight()
             )
         } else {
-            // PREVIEW 2: FLOATING WINDOW EDITOR (Unchanged)
+            // PREVIEW 2: FLOATING WINDOW EDITOR
             InteractiveOverlayCanvas(
                 project = project,
                 components = screen2Components,
                 selectedComponentId = selectedComponentId,
+                isPreviewFullScreen = isPreviewFullScreen,
+                onTogglePreviewFullScreen = onTogglePreviewFullScreen,
                 onSelectComponent = onSelectComponent,
                 onMoveComponent = { id, newX, newY ->
                     latestScreen2Components.find { it.id == id }?.let { comp ->
@@ -360,16 +415,10 @@ private fun LeftSideWidgetPalette(
     val screen1WidgetItems = remember {
         listOf(
             LeftPaletteItemSpec(
-                entry = SketchwarePaletteEntry("Floating Panel Start", ComponentWidgetType.S1_START, 210, 46, "#10B981", "#FFFFFF"),
+                entry = SketchwarePaletteEntry("Start / Stop", ComponentWidgetType.S1_START, 210, 46, "#10B981", "#FFFFFF"),
                 icon = Icons.Default.PlayArrow,
                 iconTint = Color(0xFF10B981),
                 tagSlug = "s1_start"
-            ),
-            LeftPaletteItemSpec(
-                entry = SketchwarePaletteEntry("Floating Panel Stop", ComponentWidgetType.S1_STOP, 210, 46, "#EF4444", "#FFFFFF"),
-                icon = Icons.Default.Stop,
-                iconTint = Color(0xFFEF4444),
-                tagSlug = "s1_stop"
             ),
             LeftPaletteItemSpec(
                 entry = SketchwarePaletteEntry("Text View", ComponentWidgetType.S1_TEXT, 220, 52, "#00000000", "#FFFFFF"),
@@ -859,6 +908,8 @@ fun InteractiveMainScreen1Canvas(
     project: StudioProjectEntity,
     components: List<CanvasComponentEntity>,
     selectedComponentId: Long?,
+    isPreviewFullScreen: Boolean = false,
+    onTogglePreviewFullScreen: () -> Unit = {},
     onSelectComponent: (Long?) -> Unit,
     onMoveComponent: (Long, Int, Int) -> Unit,
     onResizeComponent: (Long, Int, Int) -> Unit,
@@ -873,6 +924,16 @@ fun InteractiveMainScreen1Canvas(
     val activeHighlightId = selectedComponentId ?: focusedCanvasWidgetId
     var stableCanvasWidthDp by remember { mutableFloatStateOf(290f) }
     var stableCanvasHeightDp by remember { mutableFloatStateOf(460f) }
+    var isPreviewStarted by remember { mutableStateOf(false) }
+
+    val displayComponents = remember(components) {
+        val hasStart = components.any { it.type.equals("S1_START", ignoreCase = true) }
+        if (hasStart) {
+            components.filterNot { it.type.equals("S1_STOP", ignoreCase = true) }
+        } else {
+            components
+        }
+    }
 
     Box(
         modifier = modifier
@@ -886,18 +947,18 @@ fun InteractiveMainScreen1Canvas(
                     }
                 )
             }
-            .padding(6.dp),
+            .padding(if (isPreviewFullScreen) 0.dp else 6.dp),
         contentAlignment = Alignment.Center
     ) {
         // Outer Phone Device Frame — Full-Screen Preview with Dynamic Layout (Dhancha)
         Card(
-            shape = RoundedCornerShape(26.dp),
+            shape = RoundedCornerShape(if (isPreviewFullScreen) 0.dp else 26.dp),
             colors = CardDefaults.cardColors(containerColor = Color(0xFF090F20)),
-            border = BorderStroke(2.dp, Color(0xFF1E325C)),
+            border = if (isPreviewFullScreen) null else BorderStroke(2.dp, Color(0xFF1E325C)),
             elevation = CardDefaults.cardElevation(defaultElevation = 12.dp),
             modifier = Modifier
                 .fillMaxSize()
-                .padding(horizontal = 2.dp, vertical = 2.dp)
+                .padding(horizontal = if (isPreviewFullScreen) 0.dp else 2.dp, vertical = if (isPreviewFullScreen) 0.dp else 2.dp)
         ) {
             Column(modifier = Modifier.fillMaxSize()) {
                 // 1. Phone Status Bar ("9:41" ... status icons)
@@ -982,6 +1043,29 @@ fun InteractiveMainScreen1Canvas(
                                 fontWeight = FontWeight.Bold,
                                 modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp)
                             )
+                        }
+
+                        // Icon-only Full Screen Toggle Button inside Preview Screen
+                        Surface(
+                            shape = RoundedCornerShape(7.dp),
+                            color = if (isPreviewFullScreen) Color(0xFF4F46E5) else Color(0xFF15203B),
+                            border = BorderStroke(
+                                1.dp,
+                                if (isPreviewFullScreen) Color(0xFF818CF8) else Color(0xFF38BDF8).copy(alpha = 0.7f)
+                            ),
+                            modifier = Modifier
+                                .size(26.dp)
+                                .clickable { onTogglePreviewFullScreen() }
+                                .testTag("preview_fullscreen_toggle_button")
+                        ) {
+                            Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
+                                Icon(
+                                    imageVector = if (isPreviewFullScreen) Icons.Default.FullscreenExit else Icons.Default.Fullscreen,
+                                    contentDescription = if (isPreviewFullScreen) "Exit Full Screen Preview" else "Full Screen Preview",
+                                    tint = Color.White,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            }
                         }
                     }
                 }
@@ -1146,7 +1230,7 @@ fun InteractiveMainScreen1Canvas(
                     }
 
                     // Empty state hint if no widgets placed yet (clean, no fixed boxes)
-                    if (components.isEmpty()) {
+                    if (displayComponents.isEmpty()) {
                         Column(
                             modifier = Modifier
                                 .fillMaxSize()
@@ -1172,7 +1256,7 @@ fun InteractiveMainScreen1Canvas(
                                         textAlign = TextAlign.Center
                                     )
                                     Text(
-                                        text = "Tap Floating Panel Start, Stop, Text View, Link Open, or Image View on the left to place on the responsive guide grid.",
+                                        text = "Tap Start / Stop, Text View, Link Open, or Image View on the left to place on the screen.",
                                         color = Color(0xFF94A3B8),
                                         fontSize = 10.sp,
                                         textAlign = TextAlign.Center
@@ -1183,7 +1267,7 @@ fun InteractiveMainScreen1Canvas(
                     }
 
                     // Render Placed Widgets on the Full-Screen Dynamic Dhancha
-                    components.forEach { comp ->
+                    displayComponents.forEach { comp ->
                         key(comp.id) {
                         val isSelected = comp.id == activeHighlightId
 
@@ -1233,6 +1317,7 @@ fun InteractiveMainScreen1Canvas(
                         val typeUpper = comp.type.trim().uppercase()
                         val isStart = typeUpper == "S1_START"
                         val isStop = typeUpper == "S1_STOP"
+                        val isStartOrStopToggle = isStart || isStop
                         val isText = typeUpper == "S1_TEXT"
                         val isLink = typeUpper == "S1_LINK"
                         val isImage = typeUpper == "S1_IMAGE"
@@ -1240,8 +1325,7 @@ fun InteractiveMainScreen1Canvas(
 
                         // Accent border color per widget type matching the screenshot
                         val accentBorderColor = when {
-                            isStart -> Color(0xFF10B981)
-                            isStop -> Color(0xFFEF4444)
+                            isStartOrStopToggle -> if (isPreviewStarted) Color(0xFFEF4444) else Color(0xFF10B981)
                             isText -> Color(0xFF818CF8)
                             isLink -> Color(0xFF38BDF8)
                             isImage -> Color(0xFF38BDF8)
@@ -1252,8 +1336,9 @@ fun InteractiveMainScreen1Canvas(
                         val widgetBgColor = when {
                             isTextOrLink -> Color(0xFF1E293B).copy(alpha = 0.32f)
                             isImage -> Color(0xFF0F172A).copy(alpha = 0.45f)
+                            isStartOrStopToggle && isPreviewStarted -> Color(0xFFEF4444).copy(alpha = 0.28f)
                             else -> {
-                                val parsed = parseHexColorSafe(comp.bgColorHex, if (isStart) Color(0xFF10B981) else Color(0xFFEF4444))
+                                val parsed = parseHexColorSafe(comp.bgColorHex, Color(0xFF10B981))
                                 if (parsed.alpha == 0f) Color.Transparent else parsed.copy(alpha = 0.24f)
                             }
                         }
@@ -1296,8 +1381,12 @@ fun InteractiveMainScreen1Canvas(
                                 .pointerInput(comp.id) {
                                     detectTapGestures(
                                         onTap = {
-                                            // Tap only focuses widget on canvas without opening bottom options
+                                            // Tap focuses widget on canvas without opening bottom options;
+                                            // for Start/Stop button, tapping toggles between Start and Stop preview state!
                                             focusedCanvasWidgetId = comp.id
+                                            if (isStartOrStopToggle) {
+                                                isPreviewStarted = !isPreviewStarted
+                                            }
                                         },
                                         onLongPress = { pressOffset ->
                                             val wPx = with(density) { currentLiveWidthDp.dp.toPx() }
@@ -1410,14 +1499,20 @@ fun InteractiveMainScreen1Canvas(
                         ) {
                             when (typeUpper) {
                                 "S1_START", "S1_STOP" -> {
-                                    val solidTint = parseHexColorSafe(
-                                        comp.bgColorHex,
-                                        if (isStart) Color(0xFF10B981) else Color(0xFFEF4444)
-                                    )
+                                    val solidTint = if (isPreviewStarted) {
+                                        Color(0xFFEF4444)
+                                    } else {
+                                        parseHexColorSafe(comp.bgColorHex, Color(0xFF10B981))
+                                    }
+                                    val activeToggleText = if (isPreviewStarted) {
+                                        comp.offPayloadHex.ifBlank { "STOP SERVICE" }
+                                    } else {
+                                        comp.label.ifBlank { "START SERVICE" }
+                                    }
                                     if (bgBitmap != null) {
                                         Image(
                                             bitmap = bgBitmap,
-                                            contentDescription = "${comp.label} Background",
+                                            contentDescription = "$activeToggleText Background",
                                             contentScale = ContentScale.Crop,
                                             modifier = Modifier
                                                 .fillMaxSize()
@@ -1430,83 +1525,105 @@ fun InteractiveMainScreen1Canvas(
                                                 .background(
                                                     Brush.horizontalGradient(
                                                         colors = listOf(
-                                                            solidTint.copy(alpha = 0.38f),
-                                                            solidTint.copy(alpha = 0.18f)
+                                                            solidTint.copy(alpha = 0.42f),
+                                                            solidTint.copy(alpha = 0.22f)
                                                         )
                                                     )
                                                 )
                                         )
                                     }
+                                    val compactPad = (liveWidthDp * 0.05f).coerceIn(4f, 12f).dp
+                                    val iconBoxDp = (minOf(liveHeightDp * 0.52f, liveWidthDp * 0.22f)).coerceIn(14f, 26f)
+                                    val textAvailW = (liveWidthDp - iconBoxDp - 18f).coerceAtLeast(24f)
                                     Row(
                                         modifier = Modifier
                                             .fillMaxSize()
-                                            .padding(horizontal = 12.dp),
+                                            .padding(horizontal = compactPad),
                                         verticalAlignment = Alignment.CenterVertically,
                                         horizontalArrangement = Arrangement.Center
                                     ) {
                                         Box(
                                             modifier = Modifier
-                                                .size(26.dp)
+                                                .size(iconBoxDp.dp)
                                                 .clip(CircleShape)
-                                                .background(if (isStart) Color(0xFF10B981) else Color(0xFFEF4444)),
+                                                .background(if (isPreviewStarted) Color(0xFFEF4444) else Color(0xFF10B981)),
                                             contentAlignment = Alignment.Center
                                         ) {
                                             Icon(
-                                                imageVector = if (isStart) Icons.Default.PlayArrow else Icons.Default.Stop,
+                                                imageVector = if (isPreviewStarted) Icons.Default.Stop else Icons.Default.PlayArrow,
                                                 contentDescription = null,
                                                 tint = Color.White,
-                                                modifier = Modifier.size(15.dp)
+                                                modifier = Modifier.size((iconBoxDp * 0.58f).dp)
                                             )
                                         }
-                                        Spacer(Modifier.width(10.dp))
-                                        Text(
-                                            text = comp.label,
+                                        Spacer(Modifier.width((liveWidthDp * 0.04f).coerceIn(3f, 10f).dp))
+                                        AutoFitText(
+                                            text = activeToggleText,
                                             color = widgetTextColor,
-                                            fontSize = 12.5.sp,
-                                            fontWeight = FontWeight.ExtraBold,
-                                            maxLines = 1,
-                                            overflow = TextOverflow.Ellipsis
+                                            maxFontSizeSp = 12.5f,
+                                            minFontSizeSp = 4.5f,
+                                            availableWidthDp = textAvailW,
+                                            availableHeightDp = liveHeightDp,
+                                            fontWeight = FontWeight.ExtraBold
                                         )
                                     }
                                 }
 
                                 "S1_TEXT" -> {
+                                    val compactPad = (liveWidthDp * 0.05f).coerceIn(4f, 12f).dp
+                                    val showBadge = liveWidthDp >= 78f && liveHeightDp >= 30f
+                                    val badgeDp = (minOf(liveHeightDp * 0.5f, liveWidthDp * 0.22f)).coerceIn(14f, 26f)
+                                    val showSubLabel = liveHeightDp >= 40f && liveWidthDp >= 90f
+                                    val textAvailW = (liveWidthDp - (if (showBadge) badgeDp + 16f else 8f)).coerceAtLeast(24f)
                                     Row(
                                         modifier = Modifier
                                             .fillMaxSize()
-                                            .padding(horizontal = 12.dp),
+                                            .padding(horizontal = compactPad),
                                         verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                        horizontalArrangement = Arrangement.spacedBy((liveWidthDp * 0.04f).coerceIn(4f, 10f).dp)
                                     ) {
-                                        Box(
-                                            modifier = Modifier
-                                                .size(26.dp)
-                                                .clip(RoundedCornerShape(7.dp))
-                                                .background(Color(0xFF6366F1)),
-                                            contentAlignment = Alignment.Center
-                                        ) {
-                                            Text(
-                                                text = "T",
-                                                color = Color.White,
-                                                fontSize = 13.sp,
-                                                fontWeight = FontWeight.ExtraBold
-                                            )
+                                        if (showBadge) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .size(badgeDp.dp)
+                                                    .clip(RoundedCornerShape(7.dp))
+                                                    .background(Color(0xFF6366F1)),
+                                                contentAlignment = Alignment.Center
+                                            ) {
+                                                AutoFitText(
+                                                    text = "T",
+                                                    color = Color.White,
+                                                    maxFontSizeSp = 13f,
+                                                    minFontSizeSp = 6f,
+                                                    availableWidthDp = badgeDp,
+                                                    availableHeightDp = badgeDp,
+                                                    fontWeight = FontWeight.ExtraBold
+                                                )
+                                            }
                                         }
-                                        Column(modifier = Modifier.weight(1f)) {
-                                            Text(
-                                                text = "Text View",
-                                                color = Color(0xFFCBD5E1),
-                                                fontSize = 9.5.sp,
-                                                fontWeight = FontWeight.SemiBold,
-                                                maxLines = 1
-                                            )
-                                            Text(
+                                        Column(
+                                            modifier = Modifier.weight(1f),
+                                            verticalArrangement = Arrangement.Center
+                                        ) {
+                                            if (showSubLabel) {
+                                                AutoFitText(
+                                                    text = "Text View",
+                                                    color = Color(0xFFCBD5E1),
+                                                    maxFontSizeSp = 9.5f,
+                                                    minFontSizeSp = 4.5f,
+                                                    availableWidthDp = textAvailW,
+                                                    availableHeightDp = liveHeightDp * 0.4f,
+                                                    fontWeight = FontWeight.SemiBold
+                                                )
+                                            }
+                                            AutoFitText(
                                                 text = comp.label,
                                                 color = widgetTextColor,
-                                                fontSize = 12.sp,
-                                                fontWeight = FontWeight.Bold,
-                                                maxLines = 1,
-                                                overflow = TextOverflow.Ellipsis
+                                                maxFontSizeSp = 12f,
+                                                minFontSizeSp = 4.5f,
+                                                availableWidthDp = textAvailW,
+                                                availableHeightDp = if (showSubLabel) liveHeightDp * 0.58f else liveHeightDp,
+                                                fontWeight = FontWeight.Bold
                                             )
                                         }
                                     }
@@ -1514,16 +1631,20 @@ fun InteractiveMainScreen1Canvas(
 
                                 "S1_LINK" -> {
                                     // Transparent background; shows custom side logo if added, or clean text if not added
+                                    val compactPad = (liveWidthDp * 0.05f).coerceIn(4f, 12f).dp
+                                    val logoDp = (minOf(liveHeightDp * 0.52f, liveWidthDp * 0.22f)).coerceIn(14f, 26f)
+                                    val showSubUrl = comp.linkUrl.isNotBlank() && liveHeightDp >= 38f
+                                    val textAvailW = (liveWidthDp - (if (customBitmap != null) logoDp + 22f else 18f)).coerceAtLeast(24f)
                                     Row(
                                         modifier = Modifier
                                             .fillMaxSize()
-                                            .padding(horizontal = 12.dp),
+                                            .padding(horizontal = compactPad),
                                         verticalAlignment = Alignment.CenterVertically,
                                         horizontalArrangement = Arrangement.SpaceBetween
                                     ) {
                                         Row(
                                             verticalAlignment = Alignment.CenterVertically,
-                                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                            horizontalArrangement = Arrangement.spacedBy((liveWidthDp * 0.04f).coerceIn(4f, 10f).dp),
                                             modifier = Modifier.weight(1f)
                                         ) {
                                             if (customBitmap != null) {
@@ -1532,36 +1653,44 @@ fun InteractiveMainScreen1Canvas(
                                                     contentDescription = "Link Side Logo",
                                                     contentScale = ContentScale.Crop,
                                                     modifier = Modifier
-                                                        .size(26.dp)
+                                                        .size(logoDp.dp)
                                                         .clip(RoundedCornerShape(7.dp))
                                                 )
                                             }
-                                            Column(modifier = Modifier.weight(1f)) {
-                                                Text(
+                                            Column(
+                                                modifier = Modifier.weight(1f),
+                                                verticalArrangement = Arrangement.Center
+                                            ) {
+                                                AutoFitText(
                                                     text = comp.label,
                                                     color = widgetTextColor,
-                                                    fontSize = 12.sp,
-                                                    fontWeight = FontWeight.Bold,
-                                                    maxLines = 1,
-                                                    overflow = TextOverflow.Ellipsis
+                                                    maxFontSizeSp = 12f,
+                                                    minFontSizeSp = 4.5f,
+                                                    availableWidthDp = textAvailW,
+                                                    availableHeightDp = if (showSubUrl) liveHeightDp * 0.56f else liveHeightDp,
+                                                    fontWeight = FontWeight.Bold
                                                 )
-                                                if (comp.linkUrl.isNotBlank()) {
-                                                    Text(
+                                                if (showSubUrl) {
+                                                    AutoFitText(
                                                         text = comp.linkUrl,
                                                         color = Color(0xFF94A3B8),
-                                                        fontSize = 9.5.sp,
-                                                        maxLines = 1,
-                                                        overflow = TextOverflow.Ellipsis
+                                                        maxFontSizeSp = 9.5f,
+                                                        minFontSizeSp = 4.5f,
+                                                        availableWidthDp = textAvailW,
+                                                        availableHeightDp = liveHeightDp * 0.42f,
+                                                        fontWeight = FontWeight.Normal
                                                     )
                                                 }
                                             }
                                         }
-                                        Text(
-                                            text = "›",
-                                            color = Color(0xFF94A3B8),
-                                            fontSize = 16.sp,
-                                            fontWeight = FontWeight.Bold
-                                        )
+                                        if (liveWidthDp >= 75f) {
+                                            Text(
+                                                text = "›",
+                                                color = Color(0xFF94A3B8),
+                                                fontSize = (liveHeightDp * 0.34f).coerceIn(10f, 16f).sp,
+                                                fontWeight = FontWeight.Bold
+                                            )
+                                        }
                                     }
                                 }
 
@@ -1744,6 +1873,8 @@ fun InteractiveOverlayCanvas(
     project: StudioProjectEntity,
     components: List<CanvasComponentEntity>,
     selectedComponentId: Long?,
+    isPreviewFullScreen: Boolean = false,
+    onTogglePreviewFullScreen: () -> Unit = {},
     onSelectComponent: (Long?) -> Unit,
     onMoveComponent: (Long, Int, Int) -> Unit,
     onResizeComponent: (Long, Int, Int) -> Unit = { _, _, _ -> },
@@ -1778,11 +1909,19 @@ fun InteractiveOverlayCanvas(
         project.name.trim().ifEmpty { "Floating Panel" }
     }
 
-    var dragCanvasWidthDp by remember(project.id, project.canvasWidthDp) {
-        mutableFloatStateOf(project.canvasWidthDp.toFloat().coerceIn(180f, 340f))
+    val currentOnResizeCanvas by rememberUpdatedState(onResizeCanvas)
+    var isPanelResizing by remember(project.id) { mutableStateOf(false) }
+    var dragCanvasWidthDp by remember(project.id) {
+        mutableFloatStateOf(project.canvasWidthDp.toFloat().coerceIn(140f, 360f))
     }
-    var dragCanvasHeightDp by remember(project.id, project.canvasHeightDp) {
-        mutableFloatStateOf(project.canvasHeightDp.toFloat().coerceIn(180f, 480f))
+    var dragCanvasHeightDp by remember(project.id) {
+        mutableFloatStateOf(project.canvasHeightDp.toFloat().coerceIn(140f, 520f))
+    }
+    LaunchedEffect(project.id, project.canvasWidthDp, project.canvasHeightDp) {
+        if (!isPanelResizing) {
+            dragCanvasWidthDp = project.canvasWidthDp.toFloat().coerceIn(140f, 360f)
+            dragCanvasHeightDp = project.canvasHeightDp.toFloat().coerceIn(140f, 520f)
+        }
     }
 
     Box(
@@ -1790,18 +1929,18 @@ fun InteractiveOverlayCanvas(
             .fillMaxSize()
             .background(Color(0xFF070B14))
             .clickable { onSelectComponent(null) }
-            .padding(8.dp),
+            .padding(if (isPreviewFullScreen) 0.dp else 8.dp),
         contentAlignment = Alignment.Center
     ) {
         // Outer Android Phone Device Frame
         Card(
-            shape = RoundedCornerShape(26.dp),
+            shape = RoundedCornerShape(if (isPreviewFullScreen) 0.dp else 26.dp),
             colors = CardDefaults.cardColors(containerColor = Color(0xFF0E1528)),
-            border = BorderStroke(2.dp, Color(0xFF233152)),
+            border = if (isPreviewFullScreen) null else BorderStroke(2.dp, Color(0xFF233152)),
             elevation = CardDefaults.cardElevation(defaultElevation = 10.dp),
             modifier = Modifier
                 .fillMaxSize()
-                .padding(horizontal = 2.dp, vertical = 2.dp)
+                .padding(horizontal = if (isPreviewFullScreen) 0.dp else 2.dp, vertical = if (isPreviewFullScreen) 0.dp else 2.dp)
         ) {
             Column(modifier = Modifier.fillMaxSize()) {
                 // Phone Status Bar ("9:41" ... size badge ... "main.xml")
@@ -1839,33 +1978,61 @@ fun InteractiveOverlayCanvas(
                         fontWeight = FontWeight.SemiBold
                     )
 
-                    Surface(
-                        shape = RoundedCornerShape(6.dp),
-                        color = Color(0xFF15203B),
-                        border = BorderStroke(1.dp, Color(0xFF283B66)),
-                        modifier = Modifier
-                            .clickable { onOpenChangeBackground() }
-                            .testTag("phone_status_bg_chip")
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(4.dp)
+                        Surface(
+                            shape = RoundedCornerShape(6.dp),
+                            color = Color(0xFF15203B),
+                            border = BorderStroke(1.dp, Color(0xFF283B66)),
+                            modifier = Modifier
+                                .clickable { onOpenChangeBackground() }
+                                .testTag("phone_status_bg_chip")
                         ) {
-                            Box(
-                                modifier = Modifier
-                                    .size(8.dp)
-                                    .clip(CircleShape)
-                                    .background(canvasBg)
-                                    .border(BorderStroke(0.5.dp, Color.White), CircleShape)
-                            )
-                            Text(
-                                text = if (canvasBgBitmap != null) "BG: IMG" else "BG: ${project.canvasBgColorHex}",
-                                color = Color(0xFFCBD5E1),
-                                fontSize = 9.sp,
-                                fontFamily = FontFamily.Monospace,
-                                fontWeight = FontWeight.Bold
-                            )
+                            Row(
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(8.dp)
+                                        .clip(CircleShape)
+                                        .background(canvasBg)
+                                        .border(BorderStroke(0.5.dp, Color.White), CircleShape)
+                                )
+                                Text(
+                                    text = if (canvasBgBitmap != null) "BG: IMG" else "BG: ${project.canvasBgColorHex}",
+                                    color = Color(0xFFCBD5E1),
+                                    fontSize = 9.sp,
+                                    fontFamily = FontFamily.Monospace,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                        }
+
+                        // Icon-only Full Screen Toggle Button inside Preview Screen
+                        Surface(
+                            shape = RoundedCornerShape(7.dp),
+                            color = if (isPreviewFullScreen) Color(0xFF4F46E5) else Color(0xFF15203B),
+                            border = BorderStroke(
+                                1.dp,
+                                if (isPreviewFullScreen) Color(0xFF818CF8) else Color(0xFF38BDF8).copy(alpha = 0.7f)
+                            ),
+                            modifier = Modifier
+                                .size(26.dp)
+                                .clickable { onTogglePreviewFullScreen() }
+                                .testTag("preview_fullscreen_toggle_button")
+                        ) {
+                            Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
+                                Icon(
+                                    imageVector = if (isPreviewFullScreen) Icons.Default.FullscreenExit else Icons.Default.Fullscreen,
+                                    contentDescription = if (isPreviewFullScreen) "Exit Full Screen Preview" else "Full Screen Preview",
+                                    tint = Color.White,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                            }
                         }
                     }
                 }
@@ -1965,14 +2132,16 @@ fun InteractiveOverlayCanvas(
                                             .clip(CircleShape)
                                     )
                                 } else {
-                                    Text(
+                                    AutoFitText(
                                         text = resolvedPanelTitle,
                                         color = bubbleContentColor,
-                                        fontSize = 10.sp,
+                                        maxFontSizeSp = 10f,
+                                        minFontSizeSp = 4.5f,
+                                        availableWidthDp = 58f,
+                                        availableHeightDp = 42f,
                                         fontWeight = FontWeight.ExtraBold,
                                         textAlign = TextAlign.Center,
                                         maxLines = 2,
-                                        overflow = TextOverflow.Ellipsis,
                                         modifier = Modifier.padding(4.dp)
                                     )
                                 }
@@ -1995,8 +2164,8 @@ fun InteractiveOverlayCanvas(
                         Box(
                             modifier = Modifier
                                 .size(
-                                    width = dragCanvasWidthDp.dp.coerceIn(180.dp, 340.dp),
-                                    height = dragCanvasHeightDp.dp.coerceIn(180.dp, 480.dp)
+                                    width = dragCanvasWidthDp.dp.coerceIn(140.dp, 360.dp),
+                                    height = dragCanvasHeightDp.dp.coerceIn(140.dp, 520.dp)
                                 )
                                 .clip(RoundedCornerShape(16.dp))
                                 .background(canvasBg)
@@ -2014,24 +2183,34 @@ fun InteractiveOverlayCanvas(
                             }
 
                             Column(modifier = Modifier.fillMaxSize()) {
+                                val panelScaleFactor = (dragCanvasWidthDp / 260f).coerceIn(0.54f, 1.0f)
+                                val headerLogoDp = (22f * panelScaleFactor).coerceIn(13f, 22f)
+                                val headerBtnFontSp = (8.5f * panelScaleFactor).coerceIn(5.5f, 8.5f)
+                                val headerBtnHPad = (5f * panelScaleFactor).coerceIn(2.5f, 5f).dp
+                                val headerBtnVPad = (2.5f * panelScaleFactor).coerceIn(1.5f, 2.5f).dp
+                                val titleAvailWidthDp = (dragCanvasWidthDp - 115f * panelScaleFactor - headerLogoDp).coerceAtLeast(32f)
+
                                 // Floating Window Header Bar (Transparent so background covers whole floating window)
                                 Row(
                                     modifier = Modifier
                                         .fillMaxWidth()
                                         .clickable { onOpenEditFloatingPanel() }
-                                        .padding(horizontal = 8.dp, vertical = 7.dp)
+                                        .padding(
+                                            horizontal = (8f * panelScaleFactor).coerceIn(4f, 8f).dp,
+                                            vertical = (7f * panelScaleFactor).coerceIn(4f, 7f).dp
+                                        )
                                         .testTag("floating_panel_header_bar"),
                                     horizontalArrangement = Arrangement.SpaceBetween,
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     Row(
                                         verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(5.dp),
+                                        horizontalArrangement = Arrangement.spacedBy((5f * panelScaleFactor).coerceIn(2.5f, 5f).dp),
                                         modifier = Modifier.weight(1f)
                                     ) {
                                         Box(
                                             modifier = Modifier
-                                                .size(22.dp)
+                                                .size(headerLogoDp.dp)
                                                 .clip(CircleShape)
                                                 .background(
                                                     if (isDarkBg) Color.White.copy(alpha = 0.16f)
@@ -2056,26 +2235,26 @@ fun InteractiveOverlayCanvas(
                                                     imageVector = Icons.Default.Edit,
                                                     contentDescription = "Customize Panel Header",
                                                     tint = headerTextColor,
-                                                    modifier = Modifier.size(11.dp)
+                                                    modifier = Modifier.size((headerLogoDp * 0.5f).dp)
                                                 )
                                             }
                                         }
 
-                                        Text(
+                                        AutoFitText(
                                             text = resolvedPanelTitle,
                                             color = headerTextColor,
-                                            fontSize = 11.sp,
+                                            maxFontSizeSp = 11f,
+                                            minFontSizeSp = 4.5f,
+                                            availableWidthDp = titleAvailWidthDp,
+                                            availableHeightDp = 24f,
                                             fontWeight = FontWeight.Bold,
-                                            maxLines = 1,
-                                            softWrap = false,
-                                            overflow = TextOverflow.Ellipsis,
-                                            modifier = Modifier.weight(1f, fill = false)
+                                            modifier = Modifier.weight(1f)
                                         )
                                     }
 
                                     Row(
                                         verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(3.dp)
+                                        horizontalArrangement = Arrangement.spacedBy((3f * panelScaleFactor).coerceIn(1.5f, 3f).dp)
                                     ) {
                                         // Minimize button (collapses to Floating Bubble)
                                         Surface(
@@ -2093,11 +2272,11 @@ fun InteractiveOverlayCanvas(
                                             Text(
                                                 text = "Minimize",
                                                 color = headerTextColor,
-                                                fontSize = 8.5.sp,
+                                                fontSize = headerBtnFontSp.sp,
                                                 fontWeight = FontWeight.Bold,
                                                 maxLines = 1,
                                                 softWrap = false,
-                                                modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.5.dp)
+                                                modifier = Modifier.padding(horizontal = headerBtnHPad, vertical = headerBtnVPad)
                                             )
                                         }
 
@@ -2117,11 +2296,11 @@ fun InteractiveOverlayCanvas(
                                             Text(
                                                 text = "Hide",
                                                 color = headerTextColor,
-                                                fontSize = 8.5.sp,
+                                                fontSize = headerBtnFontSp.sp,
                                                 fontWeight = FontWeight.Bold,
                                                 maxLines = 1,
                                                 softWrap = false,
-                                                modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.5.dp)
+                                                modifier = Modifier.padding(horizontal = headerBtnHPad, vertical = headerBtnVPad)
                                             )
                                         }
 
@@ -2141,11 +2320,11 @@ fun InteractiveOverlayCanvas(
                                             Text(
                                                 text = "Kill",
                                                 color = Color.White,
-                                                fontSize = 8.5.sp,
+                                                fontSize = headerBtnFontSp.sp,
                                                 fontWeight = FontWeight.Bold,
                                                 maxLines = 1,
                                                 softWrap = false,
-                                                modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.5.dp)
+                                                modifier = Modifier.padding(horizontal = headerBtnHPad, vertical = headerBtnVPad)
                                             )
                                         }
                                     }
@@ -2329,21 +2508,29 @@ fun InteractiveOverlayCanvas(
                                                                 .clip(RoundedCornerShape(8.dp))
                                                         )
                                                     }
+                                                    val widgetHPad = (liveWidthDp * 0.05f).coerceIn(3f, 8f).dp
+                                                    val switchScale = (minOf(liveWidthDp / 150f, liveHeightDp / 38f)).coerceIn(0.52f, 0.9f)
+                                                    val textAvailW = (liveWidthDp - (if (isToggle) 44f * switchScale else 10f)).coerceAtLeast(22f)
+                                                    val hasSecondLine = comp.type == "SLIDER" || comp.type == "INPUT" || (comp.type == "LINK" && comp.linkUrl.isNotBlank() && liveHeightDp >= 34f)
                                                     Row(
                                                         modifier = Modifier
                                                             .fillMaxSize()
-                                                            .padding(horizontal = 8.dp),
+                                                            .padding(horizontal = widgetHPad),
                                                         horizontalArrangement = Arrangement.SpaceBetween,
                                                         verticalAlignment = Alignment.CenterVertically
                                                     ) {
-                                                        Column(modifier = Modifier.weight(1f)) {
-                                                            Text(
+                                                        Column(
+                                                            modifier = Modifier.weight(1f),
+                                                            verticalArrangement = Arrangement.Center
+                                                        ) {
+                                                            AutoFitText(
                                                                 text = if (comp.type == "LINK") "🔗 ${comp.label}" else comp.label,
                                                                 color = widgetText,
-                                                                fontSize = 11.sp,
-                                                                fontWeight = FontWeight.Bold,
-                                                                maxLines = 1,
-                                                                overflow = TextOverflow.Ellipsis
+                                                                maxFontSizeSp = 11f,
+                                                                minFontSizeSp = 4.5f,
+                                                                availableWidthDp = textAvailW,
+                                                                availableHeightDp = if (hasSecondLine) liveHeightDp * 0.5f else liveHeightDp,
+                                                                fontWeight = FontWeight.Bold
                                                             )
                                                             if (comp.type == "SLIDER") {
                                                                 val sliderVal = (comp.currentValue.toFloatOrNull() ?: 50f)
@@ -2355,34 +2542,44 @@ fun InteractiveOverlayCanvas(
                                                                         onSelectComponent(comp.id)
                                                                     },
                                                                     valueRange = 0f..comp.sliderMax.toFloat().coerceAtLeast(1f),
-                                                                    modifier = Modifier.height(22.dp)
+                                                                    modifier = Modifier.height((liveHeightDp * 0.45f).coerceIn(14f, 22f).dp)
                                                                 )
                                                             } else if (comp.type == "INPUT") {
-                                                                Text(
+                                                                AutoFitText(
                                                                     text = comp.currentValue.ifBlank { "Enter value..." },
                                                                     color = widgetText.copy(alpha = 0.85f),
-                                                                    fontSize = 10.sp,
-                                                                    fontFamily = FontFamily.Monospace,
-                                                                    maxLines = 1
+                                                                    maxFontSizeSp = 10f,
+                                                                    minFontSizeSp = 4.5f,
+                                                                    availableWidthDp = textAvailW,
+                                                                    availableHeightDp = liveHeightDp * 0.45f,
+                                                                    fontWeight = FontWeight.Medium,
+                                                                    fontFamily = FontFamily.Monospace
                                                                 )
-                                                            } else if (comp.type == "LINK" && comp.linkUrl.isNotBlank()) {
-                                                                Text(
+                                                            } else if (comp.type == "LINK" && comp.linkUrl.isNotBlank() && liveHeightDp >= 34f) {
+                                                                AutoFitText(
                                                                     text = comp.linkUrl,
                                                                     color = widgetText.copy(alpha = 0.8f),
-                                                                    fontSize = 9.sp,
-                                                                    maxLines = 1,
-                                                                    overflow = TextOverflow.Ellipsis
+                                                                    maxFontSizeSp = 9f,
+                                                                    minFontSizeSp = 4.5f,
+                                                                    availableWidthDp = textAvailW,
+                                                                    availableHeightDp = liveHeightDp * 0.42f,
+                                                                    fontWeight = FontWeight.Normal
                                                                 )
                                                             }
                                                         }
                                                         if (isToggle) {
-                                                            Switch(
-                                                                checked = isChecked,
-                                                                onCheckedChange = {
-                                                                    // Preview screen never executes target file changes; only selects widget
-                                                                    onSelectComponent(comp.id)
-                                                                }
-                                                            )
+                                                            Box(
+                                                                modifier = Modifier.scale(switchScale),
+                                                                contentAlignment = Alignment.CenterEnd
+                                                            ) {
+                                                                Switch(
+                                                                    checked = isChecked,
+                                                                    onCheckedChange = {
+                                                                        // Preview screen never executes target file changes; only selects widget
+                                                                        onSelectComponent(comp.id)
+                                                                    }
+                                                                )
+                                                            }
                                                         }
                                                     }
 
@@ -2433,20 +2630,101 @@ fun InteractiveOverlayCanvas(
                                     }
                                 }
 
+                                // Right Edge Resize Strip for Floating Panel Window
+                                Box(
+                                    modifier = Modifier
+                                        .align(Alignment.CenterEnd)
+                                        .width(12.dp)
+                                        .fillMaxHeight()
+                                        .pointerInput(project.id) {
+                                            detectDragGestures(
+                                                onDragStart = { isPanelResizing = true },
+                                                onDragCancel = {
+                                                    isPanelResizing = false
+                                                    currentOnResizeCanvas(
+                                                        dragCanvasWidthDp.roundToInt(),
+                                                        dragCanvasHeightDp.roundToInt()
+                                                    )
+                                                },
+                                                onDragEnd = {
+                                                    isPanelResizing = false
+                                                    currentOnResizeCanvas(
+                                                        dragCanvasWidthDp.roundToInt(),
+                                                        dragCanvasHeightDp.roundToInt()
+                                                    )
+                                                },
+                                                onDrag = { change, dragAmount ->
+                                                    change.consume()
+                                                    val dxDp = with(density) { dragAmount.x.toDp().value }
+                                                    dragCanvasWidthDp = (dragCanvasWidthDp + dxDp).coerceIn(140f, 360f)
+                                                    val wInt = dragCanvasWidthDp.roundToInt()
+                                                    val hInt = dragCanvasHeightDp.roundToInt()
+                                                    com.example.service.DynamicOverlayRegistry.setActiveCanvasSizeDp(wInt, hInt)
+                                                    currentOnResizeCanvas(wInt, hInt)
+                                                }
+                                            )
+                                        }
+                                )
+
+                                // Bottom Edge Resize Strip for Floating Panel Window
+                                Box(
+                                    modifier = Modifier
+                                        .align(Alignment.BottomCenter)
+                                        .height(12.dp)
+                                        .fillMaxWidth()
+                                        .pointerInput(project.id) {
+                                            detectDragGestures(
+                                                onDragStart = { isPanelResizing = true },
+                                                onDragCancel = {
+                                                    isPanelResizing = false
+                                                    currentOnResizeCanvas(
+                                                        dragCanvasWidthDp.roundToInt(),
+                                                        dragCanvasHeightDp.roundToInt()
+                                                    )
+                                                },
+                                                onDragEnd = {
+                                                    isPanelResizing = false
+                                                    currentOnResizeCanvas(
+                                                        dragCanvasWidthDp.roundToInt(),
+                                                        dragCanvasHeightDp.roundToInt()
+                                                    )
+                                                },
+                                                onDrag = { change, dragAmount ->
+                                                    change.consume()
+                                                    val dyDp = with(density) { dragAmount.y.toDp().value }
+                                                    dragCanvasHeightDp = (dragCanvasHeightDp + dyDp).coerceIn(140f, 520f)
+                                                    val wInt = dragCanvasWidthDp.roundToInt()
+                                                    val hInt = dragCanvasHeightDp.roundToInt()
+                                                    com.example.service.DynamicOverlayRegistry.setActiveCanvasSizeDp(wInt, hInt)
+                                                    currentOnResizeCanvas(wInt, hInt)
+                                                }
+                                            )
+                                        }
+                                )
+
                                 // Corner Resize Handle for Floating Panel Window (Works both when Auto Size is ON and OFF)
                                 Box(
                                     modifier = Modifier
                                         .align(Alignment.BottomEnd)
-                                        .size(24.dp)
-                                        .clip(RoundedCornerShape(topStart = 8.dp, bottomEnd = 16.dp))
+                                        .size(28.dp)
+                                        .clip(RoundedCornerShape(topStart = 9.dp, bottomEnd = 16.dp))
                                         .background(
-                                            if (isDarkBg) Color(0xFF38BDF8).copy(alpha = 0.35f)
-                                            else Color(0xFF2563EB).copy(alpha = 0.25f)
+                                            if (isDarkBg) Color(0xFF38BDF8).copy(alpha = 0.55f)
+                                            else Color(0xFF2563EB).copy(alpha = 0.40f)
                                         )
-                                        .pointerInput(project.id, project.autoFixSize) {
+                                        .pointerInput(project.id) {
                                             detectDragGestures(
+                                                onDragStart = { isPanelResizing = true },
+                                                onDragCancel = {
+                                                    isPanelResizing = false
+                                                    currentOnResizeCanvas(
+                                                        dragCanvasWidthDp.roundToInt(),
+                                                        dragCanvasHeightDp.roundToInt()
+                                                    )
+                                                },
                                                 onDragEnd = {
-                                                    onResizeCanvas(
+                                                    isPanelResizing = false
+                                                    currentOnResizeCanvas(
                                                         dragCanvasWidthDp.roundToInt(),
                                                         dragCanvasHeightDp.roundToInt()
                                                     )
@@ -2455,8 +2733,12 @@ fun InteractiveOverlayCanvas(
                                                     change.consume()
                                                     val dxDp = with(density) { dragAmount.x.toDp().value }
                                                     val dyDp = with(density) { dragAmount.y.toDp().value }
-                                                    dragCanvasWidthDp = (dragCanvasWidthDp + dxDp).coerceIn(180f, 340f)
-                                                    dragCanvasHeightDp = (dragCanvasHeightDp + dyDp).coerceIn(180f, 480f)
+                                                    dragCanvasWidthDp = (dragCanvasWidthDp + dxDp).coerceIn(140f, 360f)
+                                                    dragCanvasHeightDp = (dragCanvasHeightDp + dyDp).coerceIn(140f, 520f)
+                                                    val wInt = dragCanvasWidthDp.roundToInt()
+                                                    val hInt = dragCanvasHeightDp.roundToInt()
+                                                    com.example.service.DynamicOverlayRegistry.setActiveCanvasSizeDp(wInt, hInt)
+                                                    currentOnResizeCanvas(wInt, hInt)
                                                 }
                                             )
                                         }
@@ -2466,7 +2748,7 @@ fun InteractiveOverlayCanvas(
                                     Text(
                                         text = "↘",
                                         color = headerTextColor,
-                                        fontSize = 12.sp,
+                                        fontSize = 13.sp,
                                         fontWeight = FontWeight.ExtraBold
                                     )
                                 }

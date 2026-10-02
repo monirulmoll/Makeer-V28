@@ -49,8 +49,8 @@ public class DynamicOverlayRegistry {
     public static synchronized void updateActiveOverlay(String title, String floatingLogoPath, int widthDp, int heightDp, String bgHex, String bgImagePath, boolean autoFixSize, List<OverlayItemSpec> items) {
         activeOverlayTitle = title != null ? title : "";
         activeFloatingLogoPath = floatingLogoPath != null ? floatingLogoPath : "";
-        activeCanvasWidthDp = Math.max(180, widthDp);
-        activeCanvasHeightDp = Math.max(160, heightDp);
+        activeCanvasWidthDp = Math.max(130, widthDp);
+        activeCanvasHeightDp = Math.max(130, heightDp);
         activeCanvasBgHex = bgHex != null && !bgHex.trim().isEmpty() ? bgHex : "#FFFFFF";
         activeCanvasBgImagePath = bgImagePath != null ? bgImagePath.trim() : "";
         activeAutoFixSize = autoFixSize;
@@ -129,6 +129,11 @@ public class DynamicOverlayRegistry {
 
     public static synchronized int getActiveCanvasHeightDp() {
         return activeCanvasHeightDp;
+    }
+
+    public static synchronized void setActiveCanvasSizeDp(int widthDp, int heightDp) {
+        activeCanvasWidthDp = Math.max(130, widthDp);
+        activeCanvasHeightDp = Math.max(130, heightDp);
     }
 
     public static synchronized String getActiveCanvasBgHex() {

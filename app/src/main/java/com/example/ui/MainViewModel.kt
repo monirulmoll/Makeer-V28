@@ -132,6 +132,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val componentWriteMutex = Mutex()
     private val latestWidgetSizes = ConcurrentHashMap<Long, Pair<Int, Int>>()
     private val latestWidgetPositions = ConcurrentHashMap<Long, Pair<Int, Int>>()
+    private val latestCanvasSizes = ConcurrentHashMap<Long, Pair<Int, Int>>()
 
     private fun isWelcomeAlreadySeen(): Boolean {
         return onboardingPrefs.getBoolean("has_completed_welcome_onboarding", false)
@@ -905,7 +906,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     targetFilePath = "",
                     byteOffsetHex = "S1_WIDGET",
                     onPayloadHex = "",
-                    offPayloadHex = "",
+                    offPayloadHex = if (widgetType == ComponentWidgetType.S1_START || widgetType == ComponentWidgetType.S1_STOP) {
+                        "Floating Panel Stop"
+                    } else {
+                        ""
+                    },
                     sliderMax = 100,
                     currentValue = "0",
                     linkUrl = if (widgetType == ComponentWidgetType.S1_LINK) "https://instagram.com" else "",
@@ -1032,6 +1037,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 updatedAt = System.currentTimeMillis()
             )
         }
+        latestCanvasSizes[updatedProject.id] = updatedProject.canvasWidthDp to updatedProject.canvasHeightDp
+        DynamicOverlayRegistry.setActiveCanvasSizeDp(updatedProject.canvasWidthDp, updatedProject.canvasHeightDp)
 
         _uiState.update {
             it.copy(
@@ -1082,11 +1089,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
      * Resizes the Floating Mod Menu window body (width & height in dp) from its corner handle
      * (works both when Auto Fix Size is ON and OFF; when Auto Fix Size is ON, widgets auto-fit to cover the new panel width).
      */
-    fun resizeActiveProjectCanvas(deltaWidthDp: Int, deltaHeightDp: Int) {
+    fun resizeActiveProjectCanvas(targetWidthDp: Int, targetHeightDp: Int) {
         val project = _uiState.value.activeProject ?: return
-        val newW = (project.canvasWidthDp + deltaWidthDp).coerceIn(170, 420)
-        val newH = (project.canvasHeightDp + deltaHeightDp).coerceIn(160, 620)
-        if (newW == project.canvasWidthDp && newH == project.canvasHeightDp) return
+        val newW = targetWidthDp.coerceIn(140, 380)
+        val newH = targetHeightDp.coerceIn(140, 540)
+        latestCanvasSizes[project.id] = newW to newH
+        DynamicOverlayRegistry.setActiveCanvasSizeDp(newW, newH)
         val updatedProject = project.copy(
             canvasWidthDp = newW,
             canvasHeightDp = newH,
@@ -1099,12 +1107,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 statusToast = "Floating Panel Size: ${newW}dp × ${newH}dp"
             )
         }
-        viewModelScope.launch {
-            studioDao.updateProject(updatedProject)
-            if (updatedProject.autoFixSize) {
-                relayoutComponentsForAutoFix(updatedProject.id, newW)
+        viewModelScope.launch(Dispatchers.IO) {
+            componentWriteMutex.withLock {
+                try {
+                    studioDao.updateProject(updatedProject)
+                    if (updatedProject.autoFixSize) {
+                        relayoutComponentsForAutoFix(updatedProject.id, newW)
+                    }
+                    syncOverlayRegistryInBackground(updatedProject)
+                } catch (_: Throwable) {
+                }
             }
-            syncOverlayRegistryInBackground(updatedProject)
         }
     }
 
@@ -1157,18 +1170,22 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 borderAnimation = comp.borderAnimation
             }
         }
+        val effectiveSize = latestCanvasSizes[project.id] ?: (project.canvasWidthDp to project.canvasHeightDp)
         DynamicOverlayRegistry.updateActiveOverlay(
             project.overlayTitle.ifBlank { project.name },
             project.floatingLogoPath.ifBlank { project.appLogoPath },
-            project.canvasWidthDp,
-            project.canvasHeightDp,
+            effectiveSize.first,
+            effectiveSize.second,
             project.canvasBgColorHex,
             project.canvasBgImagePath,
             project.autoFixSize,
             specs
         )
         if (!_uiState.value.isBundledStandaloneApk) {
-            exportProjectToErrorStudioFolder(project, list)
+            exportProjectToErrorStudioFolder(
+                project.copy(canvasWidthDp = effectiveSize.first, canvasHeightDp = effectiveSize.second),
+                list
+            )
         }
     }
 
@@ -1504,12 +1521,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val isTurningOn: Boolean
 
         when (component.type) {
-            ComponentWidgetType.S1_START.name -> {
-                launchSystemFloatingOverlay()
-                return
-            }
+            ComponentWidgetType.S1_START.name,
             ComponentWidgetType.S1_STOP.name -> {
-                stopSystemFloatingOverlay()
+                if (FloatingDashboardService.isRunning() || _uiState.value.isSystemOverlayRunning) {
+                    stopSystemFloatingOverlay()
+                } else {
+                    launchSystemFloatingOverlay()
+                }
                 return
             }
             ComponentWidgetType.TEXT.name,
@@ -1867,11 +1885,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
 
+        val effectiveSize = latestCanvasSizes[project.id] ?: (project.canvasWidthDp to project.canvasHeightDp)
         DynamicOverlayRegistry.updateActiveOverlay(
             project.overlayTitle.ifBlank { project.name },
             project.floatingLogoPath.ifBlank { project.appLogoPath },
-            project.canvasWidthDp,
-            project.canvasHeightDp,
+            effectiveSize.first,
+            effectiveSize.second,
             project.canvasBgColorHex,
             project.canvasBgImagePath,
             project.autoFixSize,

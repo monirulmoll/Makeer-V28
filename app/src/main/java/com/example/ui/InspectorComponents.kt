@@ -2341,6 +2341,9 @@ fun Screen1WidgetPropertyInspectorSheet(
     val isImageView = typeUpper == "S1_IMAGE"
 
     var label by remember(component.id) { mutableStateOf(component.label) }
+    var stopLabel by remember(component.id) {
+        mutableStateOf(component.offPayloadHex.ifBlank { "STOP SERVICE" })
+    }
     var bgHex by remember(component.id) {
         mutableStateOf(
             if (isTextView || isLinkOpen || isImageView) "#00000000" else component.bgColorHex
@@ -2371,6 +2374,7 @@ fun Screen1WidgetPropertyInspectorSheet(
 
     fun buildScreen1Updated(
         overrideLabel: String = label,
+        overrideStopLabel: String = stopLabel,
         overrideBgHex: String = bgHex,
         overrideTextHex: String = textHex,
         overrideBgImagePath: String = bgImagePath,
@@ -2395,6 +2399,7 @@ fun Screen1WidgetPropertyInspectorSheet(
         }
         return current.copy(
             label = overrideLabel.ifEmpty { current.label },
+            offPayloadHex = if (isStartOrStop) overrideStopLabel.ifEmpty { "STOP SERVICE" } else current.offPayloadHex,
             bgColorHex = enforcedBgHex,
             textColorHex = enforcedTextHex,
             bgImagePath = overrideBgImagePath.trim(),
@@ -2451,8 +2456,7 @@ fun Screen1WidgetPropertyInspectorSheet(
     }
 
     val widgetTitle = when (typeUpper) {
-        "S1_START" -> "Start Button (Screen 1)"
-        "S1_STOP" -> "Stop Button (Screen 1)"
+        "S1_START", "S1_STOP" -> "Start / Stop Button (Screen 1)"
         "S1_TEXT" -> "Text View (Screen 1)"
         "S1_LINK" -> "Link Open (Screen 1)"
         "S1_IMAGE" -> "Image View (Screen 1)"
@@ -2541,8 +2545,7 @@ fun Screen1WidgetPropertyInspectorSheet(
                         )
                         Text(
                             text = when (typeUpper) {
-                                "S1_START" -> "Starts & opens the Floating Window"
-                                "S1_STOP" -> "Stops & closes the Floating Window"
+                                "S1_START", "S1_STOP" -> "Single button: Press Start -> starts & shows Stop; Press Stop -> stops & shows Start"
                                 "S1_TEXT" -> "Always transparent background • Custom text color"
                                 "S1_LINK" -> "Always transparent background • Opens link on tap"
                                 "S1_IMAGE" -> "Simple Image View • Corner resizable"
@@ -2660,7 +2663,7 @@ fun Screen1WidgetPropertyInspectorSheet(
                             text = when {
                                 isLinkOpen -> "Display Text (Click to Open Link)"
                                 isTextView -> "Text View Content"
-                                else -> "Button Text"
+                                else -> "Start Text (Shown when stopped)"
                             },
                             color = Color(0xFFCBD5E1),
                             fontSize = 11.sp,
@@ -2693,6 +2696,44 @@ fun Screen1WidgetPropertyInspectorSheet(
                                 .fillMaxWidth()
                                 .testTag("s1_label_input")
                         )
+                    }
+
+                    if (isStartOrStop) {
+                        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            Text(
+                                text = "Stop Text (Shown after pressing Start)",
+                                color = Color(0xFFFCA5A5),
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                            OutlinedTextField(
+                                value = stopLabel,
+                                onValueChange = {
+                                    stopLabel = it
+                                    onSaveComponent(buildScreen1Updated(overrideStopLabel = it))
+                                },
+                                placeholder = {
+                                    Text(
+                                        text = "STOP SERVICE",
+                                        color = InspectorPlaceholderColor,
+                                        fontSize = 12.sp
+                                    )
+                                },
+                                singleLine = true,
+                                shape = RoundedCornerShape(12.dp),
+                                colors = OutlinedTextFieldDefaults.colors(
+                                    focusedContainerColor = InspectorFieldBg,
+                                    unfocusedContainerColor = InspectorFieldBg,
+                                    focusedBorderColor = Color(0xFFEF4444),
+                                    unfocusedBorderColor = InspectorFieldBorder,
+                                    focusedTextColor = Color.White,
+                                    unfocusedTextColor = Color.White
+                                ),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .testTag("s1_stop_label_input")
+                            )
+                        }
                     }
                 }
 

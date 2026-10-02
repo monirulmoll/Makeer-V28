@@ -1448,12 +1448,19 @@ fun StudioCanvasBuilderScreen(
         } else null
     }
 
+    var isPreviewFullScreen by remember { mutableStateOf(false) }
+
+    BackHandler(enabled = isPreviewFullScreen && selectedComponent == null) {
+        isPreviewFullScreen = false
+    }
+
     Scaffold(
         modifier = Modifier
             .fillMaxSize()
             .imePadding(),
         containerColor = Color(0xFF060B16),
         topBar = {
+            if (!isPreviewFullScreen) {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -1825,6 +1832,7 @@ fun StudioCanvasBuilderScreen(
                 )
                 }
             }
+            }
         },
         bottomBar = {
             val density = LocalDensity.current
@@ -1860,9 +1868,9 @@ fun StudioCanvasBuilderScreen(
                 }
 
                 // Bottom Select Preview Screen bar (Screen 1 vs Screen 2)
-                // Hidden automatically when typing on keyboard OR when editing a widget's function/properties
+                // Hidden automatically when typing on keyboard, in Full Screen Preview, OR when editing a widget's function/properties
                 AnimatedVisibility(
-                    visible = selectedComponent == null && !isKeyboardVisible && !isEditingAnyDialog,
+                    visible = !isPreviewFullScreen && selectedComponent == null && !isKeyboardVisible && !isEditingAnyDialog,
                     enter = slideInVertically(initialOffsetY = { it }),
                     exit = slideOutVertically(targetOffsetY = { it })
                 ) {
@@ -1973,6 +1981,8 @@ fun StudioCanvasBuilderScreen(
                 isLivePreviewMode = uiState.isLivePreviewMode,
                 statusToast = uiState.statusToast,
                 activePreviewScreen = uiState.activePreviewScreen,
+                isPreviewFullScreen = isPreviewFullScreen,
+                onTogglePreviewFullScreen = { isPreviewFullScreen = !isPreviewFullScreen },
                 onAddPaletteEntry = onAddPaletteEntry,
                 onSelectComponent = onSelectComponent,
                 onMoveComponent = onMoveComponent,
