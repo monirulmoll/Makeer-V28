@@ -45,11 +45,14 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
 import java.util.Locale
+import java.util.concurrent.ConcurrentHashMap
 
 enum class StudioDestination {
     WELCOME_SCREEN,
@@ -126,6 +129,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     private val studioDao = db.studioDao()
     private val auditRepo = ConfigAuditRepository(db.configAuditDao())
     private val stateWriter = LocalConfigStateWriter.getInstance()
+    private val componentWriteMutex = Mutex()
+    private val latestWidgetSizes = ConcurrentHashMap<Long, Pair<Int, Int>>()
+    private val latestWidgetPositions = ConcurrentHashMap<Long, Pair<Int, Int>>()
 
     private fun isWelcomeAlreadySeen(): Boolean {
         return onboardingPrefs.getBoolean("has_completed_welcome_onboarding", false)
@@ -914,9 +920,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 _uiState.update {
                     it.copy(
                         activePreviewScreen = 1,
-                        selectedComponentId = newId,
+                        selectedComponentId = null,
                         customEditedKotlinFiles = emptyMap(),
-                        statusToast = "Added '${entity.label}' to Screen 1 (Drag corner ↘ to resize or snap to recommended dhancha)."
+                        statusToast = "Added '${entity.label}' — Drag to position, corner ↘ to resize, or hold widget for options."
                     )
                 }
             }
@@ -1167,9 +1173,26 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun updateComponent(updated: CanvasComponentEntity) {
+        latestWidgetSizes[updated.id] = updated.widthDp to updated.heightDp
+        latestWidgetPositions[updated.id] = updated.posXDp to updated.posYDp
         viewModelScope.launch(Dispatchers.IO) {
-            studioDao.updateComponent(updated)
-            syncOverlayRegistryInBackground()
+            componentWriteMutex.withLock {
+                try {
+                    val dbLatest = studioDao.getComponentsForProjectSync(updated.projectId)
+                        .find { it.id == updated.id }
+                    val sizePair = latestWidgetSizes[updated.id]
+                    val posPair = latestWidgetPositions[updated.id]
+                    val merged = updated.copy(
+                        widthDp = sizePair?.first ?: dbLatest?.widthDp ?: updated.widthDp,
+                        heightDp = sizePair?.second ?: dbLatest?.heightDp ?: updated.heightDp,
+                        posXDp = posPair?.first ?: dbLatest?.posXDp ?: updated.posXDp,
+                        posYDp = posPair?.second ?: dbLatest?.posYDp ?: updated.posYDp
+                    )
+                    studioDao.updateComponent(merged)
+                    syncOverlayRegistryInBackground()
+                } catch (_: Throwable) {
+                }
+            }
         }
     }
 
@@ -1205,12 +1228,33 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun updateComponentPosition(component: CanvasComponentEntity, newXDp: Int, newYDp: Int) {
         val project = _uiState.value.activeProject
-        val isS1 = isScreen1WidgetType(component.type)
+        val latestInMemory = activeComponents.value.find { it.id == component.id } ?: component
+        val isS1 = isScreen1WidgetType(latestInMemory.type)
         if (!isS1 && project?.autoFixSize == true) return
-        val maxW = if (isS1) 320 else (project?.canvasWidthDp ?: 310)
+        val maxW = if (isS1) 420 else (project?.canvasWidthDp ?: 310)
         val clampedX = newXDp.coerceIn(0, (maxW - 28).coerceAtLeast(0))
         val clampedY = newYDp.coerceIn(0, 2500)
-        updateComponent(component.copy(posXDp = clampedX, posYDp = clampedY))
+        latestWidgetPositions[component.id] = clampedX to clampedY
+        viewModelScope.launch(Dispatchers.IO) {
+            componentWriteMutex.withLock {
+                try {
+                    val dbLatest = studioDao.getComponentsForProjectSync(latestInMemory.projectId)
+                        .find { it.id == latestInMemory.id } ?: latestInMemory
+                    val preservedSize = latestWidgetSizes[component.id]
+                    val latestPos = latestWidgetPositions[component.id] ?: (clampedX to clampedY)
+                    studioDao.updateComponent(
+                        dbLatest.copy(
+                            posXDp = latestPos.first,
+                            posYDp = latestPos.second,
+                            widthDp = preservedSize?.first ?: dbLatest.widthDp,
+                            heightDp = preservedSize?.second ?: dbLatest.heightDp
+                        )
+                    )
+                    syncOverlayRegistryInBackground()
+                } catch (_: Throwable) {
+                }
+            }
+        }
     }
 
     /**
@@ -1218,19 +1262,38 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
      */
     fun resizeComponent(component: CanvasComponentEntity, newWidthDp: Int, newHeightDp: Int) {
         val project = _uiState.value.activeProject
-        val isS1 = isScreen1WidgetType(component.type)
+        val latestInMemory = activeComponents.value.find { it.id == component.id } ?: component
+        val isS1 = isScreen1WidgetType(latestInMemory.type)
         if (!isS1 && project?.autoFixSize == true) return
-        val maxW = if (isS1) 300 else (project?.canvasWidthDp ?: 380).coerceAtLeast(100)
-        val maxH = if (isS1) 360 else (project?.canvasHeightDp ?: 500).coerceAtLeast(80)
-        val newW = newWidthDp.coerceIn(36, maxW)
-        val newH = newHeightDp.coerceIn(24, maxH)
-        if (newW == component.widthDp && newH == component.heightDp) return
-        val updated = component.copy(widthDp = newW, heightDp = newH)
-        updateComponent(updated)
+        val maxW = if (isS1) 420 else (project?.canvasWidthDp ?: 380).coerceAtLeast(100)
+        val maxH = if (isS1) 640 else (project?.canvasHeightDp ?: 500).coerceAtLeast(80)
+        val newW = newWidthDp.coerceIn(36, maxW.coerceAtLeast(36))
+        val newH = newHeightDp.coerceIn(24, maxH.coerceAtLeast(24))
+        latestWidgetSizes[component.id] = newW to newH
+        viewModelScope.launch(Dispatchers.IO) {
+            componentWriteMutex.withLock {
+                try {
+                    val dbLatest = studioDao.getComponentsForProjectSync(latestInMemory.projectId)
+                        .find { it.id == latestInMemory.id } ?: latestInMemory
+                    val latestSize = latestWidgetSizes[component.id] ?: (newW to newH)
+                    val preservedPos = latestWidgetPositions[component.id]
+                    studioDao.updateComponent(
+                        dbLatest.copy(
+                            widthDp = latestSize.first,
+                            heightDp = latestSize.second,
+                            posXDp = preservedPos?.first ?: dbLatest.posXDp,
+                            posYDp = preservedPos?.second ?: dbLatest.posYDp
+                        )
+                    )
+                    syncOverlayRegistryInBackground()
+                } catch (_: Throwable) {
+                }
+            }
+        }
         _uiState.update {
             it.copy(
-                selectedComponentId = component.id,
-                statusToast = "Widget '${component.label}' Size: ${newW}dp × ${newH}dp"
+                selectedComponentId = if (isS1) it.selectedComponentId else latestInMemory.id,
+                statusToast = "Widget '${latestInMemory.label}' Size: ${newW}dp × ${newH}dp"
             )
         }
     }

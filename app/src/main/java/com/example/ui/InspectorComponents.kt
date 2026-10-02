@@ -58,6 +58,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -2332,6 +2333,7 @@ fun Screen1WidgetPropertyInspectorSheet(
     onClose: () -> Unit
 ) {
     val context = LocalContext.current
+    val latestComponent by rememberUpdatedState(component)
     val typeUpper = component.type.trim().uppercase()
     val isStartOrStop = typeUpper == "S1_START" || typeUpper == "S1_STOP"
     val isTextView = typeUpper == "S1_TEXT"
@@ -2359,13 +2361,9 @@ fun Screen1WidgetPropertyInspectorSheet(
     var customImagePath by remember(component.id, component.customImagePath) {
         mutableStateOf(component.customImagePath)
     }
-    var linkUrl by remember(component.id, component.linkUrl) {
+    var linkUrl by remember(component.id) {
         mutableStateOf(component.linkUrl)
     }
-    var posX by remember(component.id, component.posXDp) { mutableStateOf(component.posXDp) }
-    var posY by remember(component.id, component.posYDp) { mutableStateOf(component.posYDp) }
-    var widthDp by remember(component.id, component.widthDp) { mutableStateOf(component.widthDp) }
-    var heightDp by remember(component.id, component.heightDp) { mutableStateOf(component.heightDp) }
 
     val matchingDhanche = remember(typeUpper) {
         Screen1RecommendedDhancheSlots.find { it.widgetType.equals(typeUpper, ignoreCase = true) }
@@ -2378,11 +2376,12 @@ fun Screen1WidgetPropertyInspectorSheet(
         overrideBgImagePath: String = bgImagePath,
         overrideCustomImagePath: String = customImagePath,
         overrideLinkUrl: String = linkUrl,
-        overridePosX: Int = posX,
-        overridePosY: Int = posY,
-        overrideWidthDp: Int = widthDp,
-        overrideHeightDp: Int = heightDp
+        overridePosX: Int? = null,
+        overridePosY: Int? = null,
+        overrideWidthDp: Int? = null,
+        overrideHeightDp: Int? = null
     ): CanvasComponentEntity {
+        val current = latestComponent
         val enforcedBgHex = if (isTextView || isLinkOpen || isImageView) {
             "#00000000"
         } else {
@@ -2394,17 +2393,17 @@ fun Screen1WidgetPropertyInspectorSheet(
         } else {
             overrideTextHex.trim().ifEmpty { "#FFFFFF" }
         }
-        return component.copy(
-            label = overrideLabel.trim().ifEmpty { component.label },
+        return current.copy(
+            label = overrideLabel.ifEmpty { current.label },
             bgColorHex = enforcedBgHex,
             textColorHex = enforcedTextHex,
             bgImagePath = overrideBgImagePath.trim(),
             customImagePath = overrideCustomImagePath.trim(),
             linkUrl = overrideLinkUrl.trim(),
-            posXDp = overridePosX,
-            posYDp = overridePosY,
-            widthDp = overrideWidthDp,
-            heightDp = overrideHeightDp
+            posXDp = overridePosX ?: current.posXDp,
+            posYDp = overridePosY ?: current.posYDp,
+            widthDp = overrideWidthDp ?: current.widthDp,
+            heightDp = overrideHeightDp ?: current.heightDp
         )
     }
 
@@ -2499,7 +2498,7 @@ fun Screen1WidgetPropertyInspectorSheet(
         tonalElevation = 12.dp,
         modifier = Modifier
             .fillMaxWidth()
-            .heightIn(max = 285.dp)
+            .heightIn(max = 240.dp)
             .testTag("screen1_widget_inspector_sheet")
     ) {
         Column(
@@ -2576,7 +2575,7 @@ fun Screen1WidgetPropertyInspectorSheet(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .weight(1f, fill = false)
+                    .heightIn(max = 185.dp)
                     .verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
@@ -2656,66 +2655,84 @@ fun Screen1WidgetPropertyInspectorSheet(
 
                 // 2) START / STOP / TEXT VIEW / LINK OPEN: Editable Display Text
                 if (!isImageView) {
-                    OutlinedTextField(
-                        value = label,
-                        onValueChange = {
-                            label = it
-                            onSaveComponent(buildScreen1Updated(overrideLabel = it))
-                        },
-                        label = {
-                            Text(
-                                text = when {
-                                    isLinkOpen -> "Display Text (Click to Open Link)"
-                                    isTextView -> "Text View Content"
-                                    else -> "Button Text"
-                                },
-                                color = InspectorSubtitleColor,
-                                fontSize = 11.sp
-                            )
-                        },
-                        singleLine = true,
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedContainerColor = InspectorFieldBg,
-                            unfocusedContainerColor = InspectorFieldBg,
-                            focusedBorderColor = Color(0xFF38BDF8),
-                            unfocusedBorderColor = InspectorFieldBorder,
-                            focusedTextColor = Color.White,
-                            unfocusedTextColor = Color.White
-                        ),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .testTag("s1_label_input")
-                    )
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text(
+                            text = when {
+                                isLinkOpen -> "Display Text (Click to Open Link)"
+                                isTextView -> "Text View Content"
+                                else -> "Button Text"
+                            },
+                            color = Color(0xFFCBD5E1),
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                        OutlinedTextField(
+                            value = label,
+                            onValueChange = {
+                                label = it
+                                onSaveComponent(buildScreen1Updated(overrideLabel = it))
+                            },
+                            placeholder = {
+                                Text(
+                                    text = "Enter text...",
+                                    color = InspectorPlaceholderColor,
+                                    fontSize = 12.sp
+                                )
+                            },
+                            singleLine = true,
+                            shape = RoundedCornerShape(12.dp),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedContainerColor = InspectorFieldBg,
+                                unfocusedContainerColor = InspectorFieldBg,
+                                focusedBorderColor = Color(0xFF38BDF8),
+                                unfocusedBorderColor = InspectorFieldBorder,
+                                focusedTextColor = Color.White,
+                                unfocusedTextColor = Color.White
+                            ),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("s1_label_input")
+                        )
+                    }
                 }
 
                 // 3) LINK OPEN: Link URL + Optional Side Logo
                 if (isLinkOpen) {
-                    OutlinedTextField(
-                        value = linkUrl,
-                        onValueChange = {
-                            linkUrl = it
-                            onSaveComponent(buildScreen1Updated(overrideLinkUrl = it))
-                        },
-                        label = {
-                            Text(
-                                text = "Link URL (e.g. https://instagram.com/...)",
-                                color = InspectorSubtitleColor,
-                                fontSize = 11.sp
-                            )
-                        },
-                        singleLine = true,
-                        colors = OutlinedTextFieldDefaults.colors(
-                            focusedContainerColor = InspectorFieldBg,
-                            unfocusedContainerColor = InspectorFieldBg,
-                            focusedBorderColor = Color(0xFF38BDF8),
-                            unfocusedBorderColor = InspectorFieldBorder,
-                            focusedTextColor = Color.White,
-                            unfocusedTextColor = Color.White
-                        ),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .testTag("s1_link_url_input")
-                    )
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text(
+                            text = "Link URL (e.g. https://instagram.com/...)",
+                            color = Color(0xFF38BDF8),
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                        OutlinedTextField(
+                            value = linkUrl,
+                            onValueChange = {
+                                linkUrl = it
+                                onSaveComponent(buildScreen1Updated(overrideLinkUrl = it))
+                            },
+                            placeholder = {
+                                Text(
+                                    text = "https://instagram.com/...",
+                                    color = InspectorPlaceholderColor,
+                                    fontSize = 12.sp
+                                )
+                            },
+                            singleLine = true,
+                            shape = RoundedCornerShape(12.dp),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedContainerColor = InspectorFieldBg,
+                                unfocusedContainerColor = InspectorFieldBg,
+                                focusedBorderColor = Color(0xFF38BDF8),
+                                unfocusedBorderColor = InspectorFieldBorder,
+                                focusedTextColor = Color.White,
+                                unfocusedTextColor = Color.White
+                            ),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .testTag("s1_link_url_input")
+                        )
+                    }
 
                     // Optional Side Logo for Link Open
                     Surface(
@@ -3023,10 +3040,6 @@ fun Screen1WidgetPropertyInspectorSheet(
                     if (matchingDhanche != null) {
                         OutlinedButton(
                             onClick = {
-                                posX = matchingDhanche.recX
-                                posY = matchingDhanche.recY
-                                widthDp = matchingDhanche.recW
-                                heightDp = matchingDhanche.recH
                                 onSaveComponent(
                                     buildScreen1Updated(
                                         overridePosX = matchingDhanche.recX,

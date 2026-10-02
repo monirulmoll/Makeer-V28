@@ -1591,7 +1591,10 @@ fun StudioCanvasBuilderScreen(
                     )
                 )
 
-                // Quick Studio Toolbar Action Strip
+                // Quick Studio Toolbar Action Strip (hidden while typing on keyboard to give extra space)
+                val topBarDensity = LocalDensity.current
+                val isTopKeyboardVisible = WindowInsets.ime.getBottom(topBarDensity) > 0
+                if (!isTopKeyboardVisible) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -1820,6 +1823,7 @@ fun StudioCanvasBuilderScreen(
                     onSelectComponentForEdit = onSelectComponent,
                     onOpenEditFloatingPanel = onOpenEditFloatingPanel
                 )
+                }
             }
         },
         bottomBar = {

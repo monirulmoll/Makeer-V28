@@ -15,6 +15,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -72,10 +73,13 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -119,11 +123,11 @@ data class Screen1DhancheSlot(
 )
 
 val Screen1RecommendedDhancheSlots = listOf(
-    Screen1DhancheSlot("S1_IMAGE", "Image View Frame", 23, 18, 230, 96),
-    Screen1DhancheSlot("S1_TEXT", "TextView Frame", 23, 126, 230, 40),
-    Screen1DhancheSlot("S1_START", "Start Button Frame", 23, 180, 230, 48),
-    Screen1DhancheSlot("S1_STOP", "Stop Button Frame", 23, 240, 230, 48),
-    Screen1DhancheSlot("S1_LINK", "Link Open Frame", 23, 304, 230, 44)
+    Screen1DhancheSlot("S1_START", "Start Button Frame", 18, 18, 220, 52),
+    Screen1DhancheSlot("S1_STOP", "Stop Button Frame", 18, 82, 220, 52),
+    Screen1DhancheSlot("S1_TEXT", "TextView Frame", 18, 146, 220, 52),
+    Screen1DhancheSlot("S1_LINK", "Link Open Frame", 18, 210, 220, 52),
+    Screen1DhancheSlot("S1_IMAGE", "Image View Frame", 18, 274, 220, 88)
 )
 
 data class SketchwarePaletteEntry(
@@ -239,6 +243,10 @@ fun SketchwareStudioSplitWorkspace(
     val screen2Components = remember(components) {
         components.filter { !isScreen1WidgetType(it.type) }
     }
+    val latestScreen1Components by rememberUpdatedState(screen1Components)
+    val latestScreen2Components by rememberUpdatedState(screen2Components)
+    val latestOnMoveComponent by rememberUpdatedState(onMoveComponent)
+    val latestOnResizeComponent by rememberUpdatedState(onResizeComponent)
 
     Row(modifier = modifier.fillMaxSize()) {
         // LEFT SIDE WIDGET PALETTE (Switches between Screen 1 and Screen 2 widgets)
@@ -257,13 +265,13 @@ fun SketchwareStudioSplitWorkspace(
                 selectedComponentId = selectedComponentId,
                 onSelectComponent = onSelectComponent,
                 onMoveComponent = { id, newX, newY ->
-                    screen1Components.find { it.id == id }?.let { comp ->
-                        onMoveComponent(comp, newX, newY)
+                    latestScreen1Components.find { it.id == id }?.let { comp ->
+                        latestOnMoveComponent(comp, newX, newY)
                     }
                 },
                 onResizeComponent = { id, newW, newH ->
-                    screen1Components.find { it.id == id }?.let { comp ->
-                        onResizeComponent(comp, newW, newH)
+                    latestScreen1Components.find { it.id == id }?.let { comp ->
+                        latestOnResizeComponent(comp, newW, newH)
                     }
                 },
                 modifier = Modifier
@@ -278,13 +286,13 @@ fun SketchwareStudioSplitWorkspace(
                 selectedComponentId = selectedComponentId,
                 onSelectComponent = onSelectComponent,
                 onMoveComponent = { id, newX, newY ->
-                    screen2Components.find { it.id == id }?.let { comp ->
-                        onMoveComponent(comp, newX, newY)
+                    latestScreen2Components.find { it.id == id }?.let { comp ->
+                        latestOnMoveComponent(comp, newX, newY)
                     }
                 },
                 onResizeComponent = { id, newW, newH ->
-                    screen2Components.find { it.id == id }?.let { comp ->
-                        onResizeComponent(comp, newW, newH)
+                    latestScreen2Components.find { it.id == id }?.let { comp ->
+                        latestOnResizeComponent(comp, newW, newH)
                     }
                 },
                 onResizeCanvas = onResizeCanvas,
@@ -857,15 +865,27 @@ fun InteractiveMainScreen1Canvas(
     modifier: Modifier = Modifier
 ) {
     val density = LocalDensity.current
-    val selectedComp = remember(components, selectedComponentId) {
-        components.find { it.id == selectedComponentId }
-    }
+    val currentOnSelectComponent by rememberUpdatedState(onSelectComponent)
+    val currentOnMoveComponent by rememberUpdatedState(onMoveComponent)
+    val currentOnResizeComponent by rememberUpdatedState(onResizeComponent)
+
+    var focusedCanvasWidgetId by remember { mutableStateOf<Long?>(selectedComponentId) }
+    val activeHighlightId = selectedComponentId ?: focusedCanvasWidgetId
+    var stableCanvasWidthDp by remember { mutableFloatStateOf(290f) }
+    var stableCanvasHeightDp by remember { mutableFloatStateOf(460f) }
 
     Box(
         modifier = modifier
             .fillMaxSize()
             .background(Color(0xFF060A14))
-            .clickable { onSelectComponent(null) }
+            .pointerInput(Unit) {
+                detectTapGestures(
+                    onTap = {
+                        focusedCanvasWidgetId = null
+                        currentOnSelectComponent(null)
+                    }
+                )
+            }
             .padding(6.dp),
         contentAlignment = Alignment.Center
     ) {
@@ -983,32 +1003,41 @@ fun InteractiveMainScreen1Canvas(
                         .padding(horizontal = 10.dp, vertical = 8.dp)
                         .testTag("screen1_main_canvas_window")
                 ) {
-                    val canvasWidthDp = maxWidth.value.coerceAtLeast(220f)
-                    val canvasHeightDp = maxHeight.value.coerceAtLeast(300f)
+                    if (maxWidth.value > 150f) {
+                        stableCanvasWidthDp = maxWidth.value
+                    }
+                    if (maxHeight.value > 250f) {
+                        stableCanvasHeightDp = maxHeight.value
+                    }
+                    val canvasWidthDp = maxWidth.value.coerceAtLeast(stableCanvasWidthDp).coerceAtLeast(220f)
+                    val canvasHeightDp = maxHeight.value.coerceAtLeast(stableCanvasHeightDp).coerceAtLeast(300f)
 
                     // Full-screen Dynamic Grid + Outer Dhancha Frame + Dashed Alignment/Snap Guide Lines
                     Canvas(modifier = Modifier.fillMaxSize()) {
                         val w = size.width
                         val h = size.height
-                        val gridStepPx = 22.dp.toPx()
+                        if (w <= 8f || h <= 8f) return@Canvas
+                        val safeW = w.coerceAtLeast(1f)
+                        val safeH = h.coerceAtLeast(1f)
+                        val gridStepPx = 22.dp.toPx().coerceAtLeast(8f)
 
                         // Subtle full-screen blueprint grid lines
                         var gx = gridStepPx
-                        while (gx < w) {
+                        while (gx < safeW) {
                             drawLine(
                                 color = Color(0xFF38BDF8).copy(alpha = 0.07f),
                                 start = Offset(gx, 0f),
-                                end = Offset(gx, h),
+                                end = Offset(gx, safeH),
                                 strokeWidth = 1f
                             )
                             gx += gridStepPx
                         }
                         var gy = gridStepPx
-                        while (gy < h) {
+                        while (gy < safeH) {
                             drawLine(
                                 color = Color(0xFF38BDF8).copy(alpha = 0.07f),
                                 start = Offset(0f, gy),
-                                end = Offset(w, gy),
+                                end = Offset(safeW, gy),
                                 strokeWidth = 1f
                             )
                             gy += gridStepPx
@@ -1016,31 +1045,31 @@ fun InteractiveMainScreen1Canvas(
 
                         // Dashed Center Vertical & Horizontal Responsive Alignment Guides
                         val dashEffect = PathEffect.dashPathEffect(floatArrayOf(10f, 8f), 0f)
-                        val centerX = w / 2f
-                        val centerY = h / 2f
+                        val centerX = safeW / 2f
+                        val centerY = safeH / 2f
 
                         drawLine(
                             color = Color(0xFF60A5FA).copy(alpha = 0.42f),
                             start = Offset(centerX, 0f),
-                            end = Offset(centerX, h),
+                            end = Offset(centerX, safeH),
                             strokeWidth = 1.4.dp.toPx(),
                             pathEffect = dashEffect
                         )
                         drawLine(
                             color = Color(0xFF60A5FA).copy(alpha = 0.25f),
                             start = Offset(0f, centerY),
-                            end = Offset(w, centerY),
+                            end = Offset(safeW, centerY),
                             strokeWidth = 1.dp.toPx(),
                             pathEffect = dashEffect
                         )
 
                         // Dynamic Widget Snap Guide Lines for each placed widget
                         components.forEach { item ->
-                            val itemTopPx = item.posYDp.dp.toPx().coerceIn(0f, h)
-                            val itemBottomPx = (item.posYDp + item.heightDp).dp.toPx().coerceIn(0f, h)
-                            val itemLeftPx = item.posXDp.dp.toPx().coerceIn(0f, w)
-                            val itemRightPx = (item.posXDp + item.widthDp).dp.toPx().coerceIn(0f, w)
-                            val isItemSelected = item.id == selectedComponentId
+                            val itemTopPx = item.posYDp.dp.toPx().coerceIn(0f, safeH)
+                            val itemBottomPx = (item.posYDp + item.heightDp).dp.toPx().coerceIn(0f, safeH)
+                            val itemLeftPx = item.posXDp.dp.toPx().coerceIn(0f, safeW)
+                            val itemRightPx = (item.posXDp + item.widthDp).dp.toPx().coerceIn(0f, safeW)
+                            val isItemSelected = item.id == activeHighlightId
                             val guideAlpha = if (isItemSelected) 0.55f else 0.22f
                             val guideColor = if (isItemSelected) Color(0xFF38BDF8) else Color(0xFF6366F1)
 
@@ -1048,14 +1077,14 @@ fun InteractiveMainScreen1Canvas(
                             drawLine(
                                 color = guideColor.copy(alpha = guideAlpha),
                                 start = Offset(0f, itemTopPx),
-                                end = Offset(w, itemTopPx),
+                                end = Offset(safeW, itemTopPx),
                                 strokeWidth = 1.dp.toPx(),
                                 pathEffect = dashEffect
                             )
                             drawLine(
                                 color = guideColor.copy(alpha = guideAlpha),
                                 start = Offset(0f, itemBottomPx),
-                                end = Offset(w, itemBottomPx),
+                                end = Offset(safeW, itemBottomPx),
                                 strokeWidth = 1.dp.toPx(),
                                 pathEffect = dashEffect
                             )
@@ -1065,14 +1094,14 @@ fun InteractiveMainScreen1Canvas(
                                 drawLine(
                                     color = Color(0xFF38BDF8).copy(alpha = 0.45f),
                                     start = Offset(itemLeftPx, 0f),
-                                    end = Offset(itemLeftPx, h),
+                                    end = Offset(itemLeftPx, safeH),
                                     strokeWidth = 1.dp.toPx(),
                                     pathEffect = dashEffect
                                 )
                                 drawLine(
                                     color = Color(0xFF38BDF8).copy(alpha = 0.45f),
                                     start = Offset(itemRightPx, 0f),
-                                    end = Offset(itemRightPx, h),
+                                    end = Offset(itemRightPx, safeH),
                                     strokeWidth = 1.dp.toPx(),
                                     pathEffect = dashEffect
                                 )
@@ -1092,22 +1121,24 @@ fun InteractiveMainScreen1Canvas(
                         // 8 Full-Screen Frame Anchor Squares (Corners + Midpoints, matching screenshot)
                         val handleSize = 7.dp.toPx()
                         val halfH = handleSize / 2f
+                        val safeMaxX = (safeW - handleSize).coerceAtLeast(0f)
+                        val safeMaxY = (safeH - handleSize).coerceAtLeast(0f)
                         val frameAnchorPoints = listOf(
                             Offset(0f, 0f),
-                            Offset(w / 2f, 0f),
-                            Offset(w, 0f),
-                            Offset(0f, h / 2f),
-                            Offset(w, h / 2f),
-                            Offset(0f, h),
-                            Offset(w / 2f, h),
-                            Offset(w, h)
+                            Offset(safeW / 2f, 0f),
+                            Offset(safeW, 0f),
+                            Offset(0f, safeH / 2f),
+                            Offset(safeW, safeH / 2f),
+                            Offset(0f, safeH),
+                            Offset(safeW / 2f, safeH),
+                            Offset(safeW, safeH)
                         )
                         frameAnchorPoints.forEach { pt ->
                             drawRect(
                                 color = Color(0xFF818CF8),
                                 topLeft = Offset(
-                                    (pt.x - halfH).coerceIn(0f, w - handleSize),
-                                    (pt.y - halfH).coerceIn(0f, h - handleSize)
+                                    (pt.x - halfH).coerceIn(0f, safeMaxX),
+                                    (pt.y - halfH).coerceIn(0f, safeMaxY)
                                 ),
                                 size = androidx.compose.ui.geometry.Size(handleSize, handleSize)
                             )
@@ -1153,29 +1184,50 @@ fun InteractiveMainScreen1Canvas(
 
                     // Render Placed Widgets on the Full-Screen Dynamic Dhancha
                     components.forEach { comp ->
-                        val isSelected = comp.id == selectedComponentId
-                        val matchingSlot = remember(comp.type) {
-                            Screen1RecommendedDhancheSlots.find {
-                                it.widgetType.equals(comp.type, ignoreCase = true)
+                        key(comp.id) {
+                        val isSelected = comp.id == activeHighlightId
+
+                        var isGestureActive by remember(comp.id) { mutableStateOf(false) }
+                        var activeDragMode by remember(comp.id) { mutableStateOf("MOVE") }
+
+                        var liveWidthDp by remember(comp.id) {
+                            mutableFloatStateOf(comp.widthDp.toFloat().coerceAtLeast(48f))
+                        }
+                        var liveHeightDp by remember(comp.id) {
+                            mutableFloatStateOf(comp.heightDp.toFloat().coerceAtLeast(28f))
+                        }
+                        LaunchedEffect(comp.widthDp, comp.heightDp) {
+                            if (!isGestureActive) {
+                                liveWidthDp = comp.widthDp.toFloat().coerceAtLeast(48f)
+                                liveHeightDp = comp.heightDp.toFloat().coerceAtLeast(28f)
                             }
                         }
+                        val currentLiveWidthDp by rememberUpdatedState(liveWidthDp)
+                        val currentLiveHeightDp by rememberUpdatedState(liveHeightDp)
 
-                        var liveWidthDp by remember(comp.id, comp.widthDp) {
-                            mutableFloatStateOf(
-                                comp.widthDp.toFloat().coerceIn(60f, (canvasWidthDp - 12f).coerceAtLeast(120f))
-                            )
-                        }
-                        var liveHeightDp by remember(comp.id, comp.heightDp) {
-                            mutableFloatStateOf(
-                                comp.heightDp.toFloat().coerceIn(32f, (canvasHeightDp - 16f).coerceAtLeast(120f))
-                            )
-                        }
-
-                        var offsetX by remember(comp.id, comp.posXDp) {
+                        var offsetX by remember(comp.id) {
                             mutableFloatStateOf(with(density) { comp.posXDp.dp.toPx() })
                         }
-                        var offsetY by remember(comp.id, comp.posYDp) {
+                        var offsetY by remember(comp.id) {
                             mutableFloatStateOf(with(density) { comp.posYDp.dp.toPx() })
+                        }
+                        LaunchedEffect(comp.posXDp, comp.posYDp) {
+                            if (!isGestureActive) {
+                                offsetX = with(density) { comp.posXDp.dp.toPx() }
+                                offsetY = with(density) { comp.posYDp.dp.toPx() }
+                            }
+                        }
+                        var rawDragX by remember(comp.id) {
+                            mutableFloatStateOf(with(density) { comp.posXDp.dp.toPx() })
+                        }
+                        var rawDragY by remember(comp.id) {
+                            mutableFloatStateOf(with(density) { comp.posYDp.dp.toPx() })
+                        }
+                        var rawResizeW by remember(comp.id) {
+                            mutableFloatStateOf(liveWidthDp)
+                        }
+                        var rawResizeH by remember(comp.id) {
+                            mutableFloatStateOf(liveHeightDp)
                         }
 
                         val typeUpper = comp.type.trim().uppercase()
@@ -1228,10 +1280,6 @@ fun InteractiveMainScreen1Canvas(
                             } else null
                         }
 
-                        val centeredXDp = ((canvasWidthDp - liveWidthDp) / 2f).roundToInt().coerceAtLeast(0)
-                        val currentXDp = with(density) { offsetX.toDp().value.roundToInt() }
-                        val isCenteredSnap = abs(currentXDp - centeredXDp) <= 6
-
                         Box(
                             modifier = Modifier
                                 .offset { IntOffset(offsetX.roundToInt(), offsetY.roundToInt()) }
@@ -1245,52 +1293,116 @@ fun InteractiveMainScreen1Canvas(
                                     ),
                                     RoundedCornerShape(14.dp)
                                 )
-                                .clickable {
-                                    onSelectComponent(comp.id)
+                                .pointerInput(comp.id) {
+                                    detectTapGestures(
+                                        onTap = {
+                                            // Tap only focuses widget on canvas without opening bottom options
+                                            focusedCanvasWidgetId = comp.id
+                                        },
+                                        onLongPress = { pressOffset ->
+                                            val wPx = with(density) { currentLiveWidthDp.dp.toPx() }
+                                            val hPx = with(density) { currentLiveHeightDp.dp.toPx() }
+                                            val cornerZonePx = with(density) { 26.dp.toPx() }
+                                            val isCornerTouch = pressOffset.x >= (wPx - cornerZonePx) && pressOffset.y >= (hPx - cornerZonePx)
+                                            focusedCanvasWidgetId = comp.id
+                                            if (!isCornerTouch) {
+                                                // Hold (long-press) on widget body opens the bottom options sheet
+                                                currentOnSelectComponent(comp.id)
+                                            }
+                                        }
+                                    )
                                 }
-                                .pointerInput(comp.id, canvasWidthDp, canvasHeightDp) {
+                                .pointerInput(comp.id) {
                                     detectDragGestures(
-                                        onDragStart = { onSelectComponent(comp.id) },
+                                        onDragStart = { startOffset ->
+                                            isGestureActive = true
+                                            focusedCanvasWidgetId = comp.id
+                                            if (selectedComponentId != null) {
+                                                currentOnSelectComponent(null)
+                                            }
+                                            val wPx = with(density) { currentLiveWidthDp.dp.toPx() }
+                                            val hPx = with(density) { currentLiveHeightDp.dp.toPx() }
+                                            val cornerZonePx = with(density) { 28.dp.toPx() }
+                                            val edgeZonePx = with(density) { 16.dp.toPx() }
+
+                                            activeDragMode = when {
+                                                startOffset.x >= (wPx - cornerZonePx) && startOffset.y >= (hPx - cornerZonePx) -> "RESIZE_CORNER"
+                                                startOffset.x >= (wPx - edgeZonePx) -> "RESIZE_RIGHT"
+                                                startOffset.y >= (hPx - edgeZonePx) -> "RESIZE_BOTTOM"
+                                                else -> "MOVE"
+                                            }
+                                            rawDragX = offsetX
+                                            rawDragY = offsetY
+                                            rawResizeW = currentLiveWidthDp
+                                            rawResizeH = currentLiveHeightDp
+                                        },
+                                        onDragCancel = {
+                                            isGestureActive = false
+                                        },
                                         onDragEnd = {
-                                            val maxXDp = (canvasWidthDp - liveWidthDp).roundToInt().coerceAtLeast(0)
-                                            val maxYDp = (canvasHeightDp - liveHeightDp).roundToInt().coerceAtLeast(0)
-                                            var finalXDp = with(density) { offsetX.toDp().value.roundToInt() }.coerceIn(0, maxXDp)
-                                            var finalYDp = with(density) { offsetY.toDp().value.roundToInt() }.coerceIn(0, maxYDp)
+                                            val maxW = (canvasWidthDp - 8f).coerceAtLeast(100f)
+                                            val maxH = (canvasHeightDp - 8f).coerceAtLeast(100f)
+                                            if (activeDragMode == "MOVE") {
+                                                val wDp = currentLiveWidthDp
+                                                val hDp = currentLiveHeightDp
+                                                val maxXDp = (canvasWidthDp - wDp).roundToInt().coerceAtLeast(0)
+                                                val maxYDp = (canvasHeightDp - hDp).roundToInt().coerceAtLeast(0)
+                                                val finalXDp = with(density) { offsetX.toDp().value.roundToInt() }.coerceIn(0, maxXDp)
+                                                val finalYDp = with(density) { offsetY.toDp().value.roundToInt() }.coerceIn(0, maxYDp)
 
-                                            // Smooth Snap-to-Center X guide ("thoda sa atke")
-                                            val targetCenterX = ((canvasWidthDp - liveWidthDp) / 2f).roundToInt().coerceAtLeast(0)
-                                            if (abs(finalXDp - targetCenterX) <= 16) {
-                                                finalXDp = targetCenterX
+                                                val finalXPx = with(density) { finalXDp.dp.toPx() }
+                                                val finalYPx = with(density) { finalYDp.dp.toPx() }
+                                                offsetX = finalXPx
+                                                offsetY = finalYPx
+                                                rawDragX = finalXPx
+                                                rawDragY = finalYPx
+                                                currentOnMoveComponent(comp.id, finalXDp, finalYDp)
+                                            } else {
+                                                val finalW = currentLiveWidthDp.roundToInt().coerceIn(48, maxW.roundToInt().coerceAtLeast(48))
+                                                val finalH = currentLiveHeightDp.roundToInt().coerceIn(28, maxH.coerceAtLeast(28f).roundToInt())
+                                                liveWidthDp = finalW.toFloat()
+                                                liveHeightDp = finalH.toFloat()
+                                                rawResizeW = finalW.toFloat()
+                                                rawResizeH = finalH.toFloat()
+                                                currentOnResizeComponent(comp.id, finalW, finalH)
                                             }
-
-                                            // Smooth Snap-to-Grid / Guide Y (22dp grid or recommended vertical rhythm)
-                                            val nearestGridY = ((finalYDp / 22f).roundToInt() * 22).coerceIn(0, maxYDp)
-                                            if (abs(finalYDp - nearestGridY) <= 8) {
-                                                finalYDp = nearestGridY
-                                            }
-                                            if (matchingSlot != null && abs(finalYDp - matchingSlot.recY) <= 14) {
-                                                finalYDp = matchingSlot.recY.coerceIn(0, maxYDp)
-                                            }
-
-                                            offsetX = with(density) { finalXDp.dp.toPx() }
-                                            offsetY = with(density) { finalYDp.dp.toPx() }
-                                            onMoveComponent(comp.id, finalXDp, finalYDp)
+                                            isGestureActive = false
                                         },
                                         onDrag = { change, dragAmount ->
                                             change.consume()
-                                            val maxXPx = with(density) { (canvasWidthDp - liveWidthDp).coerceAtLeast(0f).dp.toPx() }
-                                            val maxYPx = with(density) { (canvasHeightDp - liveHeightDp).coerceAtLeast(0f).dp.toPx() }
-                                            var nextX = (offsetX + dragAmount.x).coerceIn(0f, maxXPx)
-                                            val nextY = (offsetY + dragAmount.y).coerceIn(0f, maxYPx)
-
-                                            // Live magnetic catch on the center vertical guide line
-                                            val centerXPx = with(density) { ((canvasWidthDp - liveWidthDp) / 2f).coerceAtLeast(0f).dp.toPx() }
-                                            if (abs(nextX - centerXPx) <= with(density) { 5.dp.toPx() }) {
-                                                nextX = centerXPx
+                                            val maxW = (canvasWidthDp - 8f).coerceAtLeast(100f)
+                                            val maxH = (canvasHeightDp - 8f).coerceAtLeast(100f)
+                                            when (activeDragMode) {
+                                                "RESIZE_CORNER" -> {
+                                                    val dxDp = with(density) { dragAmount.x.toDp().value }
+                                                    val dyDp = with(density) { dragAmount.y.toDp().value }
+                                                    rawResizeW = (rawResizeW + dxDp).coerceIn(48f, maxW)
+                                                    rawResizeH = (rawResizeH + dyDp).coerceIn(28f, maxH)
+                                                    liveWidthDp = rawResizeW
+                                                    liveHeightDp = rawResizeH
+                                                }
+                                                "RESIZE_RIGHT" -> {
+                                                    val dxDp = with(density) { dragAmount.x.toDp().value }
+                                                    rawResizeW = (rawResizeW + dxDp).coerceIn(48f, maxW)
+                                                    liveWidthDp = rawResizeW
+                                                }
+                                                "RESIZE_BOTTOM" -> {
+                                                    val dyDp = with(density) { dragAmount.y.toDp().value }
+                                                    rawResizeH = (rawResizeH + dyDp).coerceIn(28f, maxH)
+                                                    liveHeightDp = rawResizeH
+                                                }
+                                                else -> {
+                                                    // 100% free smooth movement — never sticks or snaps on the dhancha!
+                                                    val wDp = currentLiveWidthDp
+                                                    val hDp = currentLiveHeightDp
+                                                    val maxXPx = with(density) { (canvasWidthDp - wDp).coerceAtLeast(0f).dp.toPx() }
+                                                    val maxYPx = with(density) { (canvasHeightDp - hDp).coerceAtLeast(0f).dp.toPx() }
+                                                    rawDragX = (rawDragX + dragAmount.x).coerceIn(0f, maxXPx)
+                                                    rawDragY = (rawDragY + dragAmount.y).coerceIn(0f, maxYPx)
+                                                    offsetX = rawDragX
+                                                    offsetY = rawDragY
+                                                }
                                             }
-
-                                            offsetX = nextX
-                                            offsetY = nextY
                                         }
                                     )
                                 }
@@ -1521,16 +1633,16 @@ fun InteractiveMainScreen1Canvas(
                                 )
                             }
 
-                            // Snap-to-guide feedback pill when selected
-                            if (isSelected && isCenteredSnap) {
+                            // Live dimensions pill when focused or resizing
+                            if (isSelected || isGestureActive) {
                                 Surface(
                                     shape = RoundedCornerShape(bottomEnd = 6.dp),
-                                    color = Color(0xFF059669).copy(alpha = 0.9f),
+                                    color = Color(0xFF0F172A).copy(alpha = 0.88f),
                                     modifier = Modifier.align(Alignment.TopStart)
                                 ) {
                                     Text(
-                                        text = "✓ Centered • ${liveWidthDp.roundToInt()}×${liveHeightDp.roundToInt()}",
-                                        color = Color.White,
+                                        text = "${liveWidthDp.roundToInt()}×${liveHeightDp.roundToInt()} dp",
+                                        color = accentBorderColor,
                                         fontSize = 7.5.sp,
                                         fontWeight = FontWeight.Bold,
                                         modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.5.dp)
@@ -1538,59 +1650,50 @@ fun InteractiveMainScreen1Canvas(
                                 }
                             }
 
-                            // Computer-Tab Corner Resize Handle (Bottom-Right ↘)
+                            // Always-Active Corner Resize Handle (Bottom-Right ↘ — works even when bottom options are not open!)
                             Box(
                                 modifier = Modifier
                                     .align(Alignment.BottomEnd)
-                                    .size(18.dp)
-                                    .clip(RoundedCornerShape(topStart = 6.dp, bottomEnd = 12.dp))
-                                    .background(
-                                        if (isSelected) accentBorderColor.copy(alpha = 0.92f)
-                                        else Color(0xFF0F172A).copy(alpha = 0.7f)
-                                    )
-                                    .pointerInput(comp.id, matchingSlot, canvasWidthDp, canvasHeightDp) {
+                                    .size(26.dp)
+                                    .clip(RoundedCornerShape(topStart = 8.dp, bottomEnd = 12.dp))
+                                    .background(accentBorderColor.copy(alpha = 0.92f))
+                                    .pointerInput(comp.id) {
                                         detectDragGestures(
-                                            onDragStart = { onSelectComponent(comp.id) },
+                                            onDragStart = {
+                                                isGestureActive = true
+                                                focusedCanvasWidgetId = comp.id
+                                                rawResizeW = currentLiveWidthDp
+                                                rawResizeH = currentLiveHeightDp
+                                                if (selectedComponentId != null) {
+                                                    currentOnSelectComponent(null)
+                                                }
+                                            },
+                                            onDragCancel = {
+                                                isGestureActive = false
+                                            },
                                             onDragEnd = {
-                                                val maxW = (canvasWidthDp - 12f).roundToInt().coerceAtLeast(100)
-                                                val maxH = (canvasHeightDp - 16f).roundToInt().coerceAtLeast(100)
-                                                var finalW = liveWidthDp.roundToInt().coerceIn(60, maxW)
-                                                var finalH = liveHeightDp.roundToInt().coerceIn(32, maxH)
-
-                                                // Magnetic size snap to responsive guide width or recommended height
-                                                val recResponsiveW = (canvasWidthDp * 0.82f).roundToInt().coerceIn(140, maxW)
-                                                if (abs(finalW - recResponsiveW) <= 14) {
-                                                    finalW = recResponsiveW
-                                                } else if (matchingSlot != null && abs(finalW - matchingSlot.recW) <= 12) {
-                                                    finalW = matchingSlot.recW.coerceIn(60, maxW)
-                                                }
-                                                if (matchingSlot != null && abs(finalH - matchingSlot.recH) <= 10) {
-                                                    finalH = matchingSlot.recH.coerceIn(32, maxH)
-                                                }
+                                                val maxW = (canvasWidthDp - 8f).roundToInt().coerceAtLeast(100)
+                                                val maxH = (canvasHeightDp - 8f).roundToInt().coerceAtLeast(100)
+                                                val finalW = currentLiveWidthDp.roundToInt().coerceIn(48, maxW.coerceAtLeast(48))
+                                                val finalH = currentLiveHeightDp.roundToInt().coerceIn(28, maxH.coerceAtLeast(28))
 
                                                 liveWidthDp = finalW.toFloat()
                                                 liveHeightDp = finalH.toFloat()
-                                                onResizeComponent(comp.id, finalW, finalH)
+                                                rawResizeW = finalW.toFloat()
+                                                rawResizeH = finalH.toFloat()
+                                                currentOnResizeComponent(comp.id, finalW, finalH)
+                                                isGestureActive = false
                                             },
                                             onDrag = { change, dragAmount ->
                                                 change.consume()
                                                 val dxDp = with(density) { dragAmount.x.toDp().value }
                                                 val dyDp = with(density) { dragAmount.y.toDp().value }
-                                                val maxW = (canvasWidthDp - 12f).coerceAtLeast(100f)
-                                                val maxH = (canvasHeightDp - 16f).coerceAtLeast(100f)
-                                                var nextW = (liveWidthDp + dxDp).coerceIn(60f, maxW)
-                                                var nextH = (liveHeightDp + dyDp).coerceIn(32f, maxH)
-
-                                                if (matchingSlot != null) {
-                                                    if (abs(nextW - matchingSlot.recW) <= 5f) {
-                                                        nextW = matchingSlot.recW.toFloat()
-                                                    }
-                                                    if (abs(nextH - matchingSlot.recH) <= 5f) {
-                                                        nextH = matchingSlot.recH.toFloat()
-                                                    }
-                                                }
-                                                liveWidthDp = nextW
-                                                liveHeightDp = nextH
+                                                val maxW = (canvasWidthDp - 8f).coerceAtLeast(100f)
+                                                val maxH = (canvasHeightDp - 8f).coerceAtLeast(100f)
+                                                rawResizeW = (rawResizeW + dxDp).coerceIn(48f, maxW)
+                                                rawResizeH = (rawResizeH + dyDp).coerceIn(28f, maxH)
+                                                liveWidthDp = rawResizeW
+                                                liveHeightDp = rawResizeH
                                             }
                                         )
                                     }
@@ -1600,10 +1703,11 @@ fun InteractiveMainScreen1Canvas(
                                 Text(
                                     text = "↘",
                                     color = Color.White,
-                                    fontSize = 9.5.sp,
+                                    fontSize = 11.sp,
                                     fontWeight = FontWeight.ExtraBold
                                 )
                             }
+                        }
                         }
                     }
                 }
