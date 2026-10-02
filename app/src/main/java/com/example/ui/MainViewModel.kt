@@ -1236,18 +1236,27 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun updateComponent(updated: CanvasComponentEntity) {
         latestWidgetSizes[updated.id] = updated.widthDp to updated.heightDp
         latestWidgetPositions[updated.id] = updated.posXDp to updated.posYDp
+        val isLuaMode = _uiState.value.activeProject?.isLuaScriptProject() == true
+        val normalizedUpdated = if (isLuaMode) {
+            updated.copy(
+                onPayloadHex = LuaScriptEngine.normalizeGameGuardianLuaCode(updated.onPayloadHex),
+                offPayloadHex = LuaScriptEngine.normalizeGameGuardianLuaCode(updated.offPayloadHex)
+            )
+        } else {
+            updated
+        }
         viewModelScope.launch(Dispatchers.IO) {
             componentWriteMutex.withLock {
                 try {
-                    val dbLatest = studioDao.getComponentsForProjectSync(updated.projectId)
-                        .find { it.id == updated.id }
-                    val sizePair = latestWidgetSizes[updated.id]
-                    val posPair = latestWidgetPositions[updated.id]
-                    val merged = updated.copy(
-                        widthDp = sizePair?.first ?: dbLatest?.widthDp ?: updated.widthDp,
-                        heightDp = sizePair?.second ?: dbLatest?.heightDp ?: updated.heightDp,
-                        posXDp = posPair?.first ?: dbLatest?.posXDp ?: updated.posXDp,
-                        posYDp = posPair?.second ?: dbLatest?.posYDp ?: updated.posYDp
+                    val dbLatest = studioDao.getComponentsForProjectSync(normalizedUpdated.projectId)
+                        .find { it.id == normalizedUpdated.id }
+                    val sizePair = latestWidgetSizes[normalizedUpdated.id]
+                    val posPair = latestWidgetPositions[normalizedUpdated.id]
+                    val merged = normalizedUpdated.copy(
+                        widthDp = sizePair?.first ?: dbLatest?.widthDp ?: normalizedUpdated.widthDp,
+                        heightDp = sizePair?.second ?: dbLatest?.heightDp ?: normalizedUpdated.heightDp,
+                        posXDp = posPair?.first ?: dbLatest?.posXDp ?: normalizedUpdated.posXDp,
+                        posYDp = posPair?.second ?: dbLatest?.posYDp ?: normalizedUpdated.posYDp
                     )
                     studioDao.updateComponent(merged)
                     syncOverlayRegistryInBackground()
@@ -2569,7 +2578,18 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             try {
                 val project = studioDao.getProjectById(initialProject.id) ?: initialProject
                 val components = withContext(Dispatchers.IO) {
-                    studioDao.getComponentsForProjectSync(project.id).ifEmpty { activeComponents.value }
+                    val rawList = studioDao.getComponentsForProjectSync(project.id).ifEmpty { activeComponents.value }
+                    rawList.map { comp ->
+                        val normOn = LuaScriptEngine.normalizeGameGuardianLuaCode(comp.onPayloadHex)
+                        val normOff = LuaScriptEngine.normalizeGameGuardianLuaCode(comp.offPayloadHex)
+                        if (normOn != comp.onPayloadHex || normOff != comp.offPayloadHex) {
+                            val fixed = comp.copy(onPayloadHex = normOn, offPayloadHex = normOff)
+                            studioDao.updateComponent(fixed)
+                            fixed
+                        } else {
+                            comp
+                        }
+                    }
                 }
                 val saveResult = withContext(Dispatchers.IO) {
                     LuaScriptEngine.saveLuaScriptToDownloads(appContext, project, components)

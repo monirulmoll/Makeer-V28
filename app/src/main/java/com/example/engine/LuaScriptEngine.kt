@@ -16,7 +16,8 @@ data class LuaExecutionResult(
     val logs: List<String>,
     val toastMessage: String? = null,
     val alertMessage: String? = null,
-    val openedUrl: String? = null
+    val openedUrl: String? = null,
+    val exited: Boolean = false
 )
 
 data class LuaSaveResult(
@@ -47,12 +48,11 @@ object LuaScriptEngine {
     }
 
     fun formatLuaPanelHeaderTitle(rawTitle: String): String {
-        val trimmed = rawTitle.trim().ifEmpty { "PC PANEL" }
-        return if (trimmed.contains("◈")) {
-            trimmed
-        } else {
-            "◈  ${trimmed.uppercase(Locale.US)}  ◈"
-        }
+        val trimmed = rawTitle.trim()
+            .replace("◈", "")
+            .trim()
+            .ifEmpty { "PC PANEL" }
+        return trimmed
     }
 
     fun stripLeadingEmojiForToast(label: String): String {
@@ -62,14 +62,48 @@ object LuaScriptEngine {
         return cleaned.ifEmpty { label.trim().ifEmpty { "START" } }
     }
 
+    fun normalizeGameGuardianLuaCode(rawCode: String): String {
+        if (rawCode.isBlank()) return rawCode
+        val ggApiRegex = Regex(
+            "(?<![a-zA-Z0-9_.])(toast|alert|choice|multiChoice|prompt|sleep|setVisible|isVisible|showUiButton|hideUiButton|isClickedUiButton|searchNumber|getResults|editAll|clearResults|setRanges)\\s*\\("
+        )
+        return rawCode.lines().joinToString("\n") { line ->
+            val trimmed = line.trimStart()
+            if (trimmed.startsWith("--")) {
+                line
+            } else {
+                ggApiRegex.replace(line) { matchResult ->
+                    "gg.${matchResult.groupValues[1]}("
+                }
+            }
+        }
+    }
+
+    private fun extractIfStateBranch(rawCode: String, wantOnBranch: Boolean): String? {
+        val lines = rawCode.lines()
+        val firstNonEmpty = lines.indexOfFirst { it.trim().isNotEmpty() }
+        if (firstNonEmpty < 0) return null
+        val header = lines[firstNonEmpty].trim()
+        if (!header.startsWith("if state") || !header.endsWith("then")) return null
+        val elseIdx = lines.indexOfFirst { it.trim() == "else" }
+        val endIdx = lines.indexOfLast { it.trim() == "end" }
+        if (elseIdx <= firstNonEmpty || endIdx <= elseIdx) return null
+        val slice = if (wantOnBranch) {
+            lines.subList(firstNonEmpty + 1, elseIdx)
+        } else {
+            lines.subList(elseIdx + 1, endIdx)
+        }
+        return slice.joinToString("\n") { it.trim() }.trim().takeIf { it.isNotEmpty() }
+    }
+
     fun defaultButtonLogicForWidget(label: String, type: String, linkUrl: String = ""): String {
         val cleanToastText = stripLeadingEmojiForToast(label).replace("\"", "\\\"")
-        return "gg.toast(\"$cleanToastText ON\")"
+        return "gg.toast(\"$cleanToastText: ON\")"
     }
 
     fun defaultOffLogicForWidget(label: String, type: String): String {
         val cleanToastText = stripLeadingEmojiForToast(label).replace("\"", "\\\"")
-        return "gg.toast(\"$cleanToastText OFF\")"
+        return "gg.toast(\"$cleanToastText: OFF\")"
     }
 
     fun resolveWidgetButtonLogic(component: CanvasComponentEntity): String {
@@ -80,11 +114,11 @@ object LuaScriptEngine {
             raw.startsWith("/data/") ||
             raw.startsWith("/storage/") ||
             raw.startsWith("-- TextView display widget")
-        return if (isLegacyPlaceholder) {
-            defaultButtonLogicForWidget(component.label, component.type, component.linkUrl)
-        } else {
-            raw
+        if (isLegacyPlaceholder) {
+            return defaultButtonLogicForWidget(component.label, component.type, component.linkUrl)
         }
+        val extractedOn = extractIfStateBranch(raw, wantOnBranch = true)
+        return normalizeGameGuardianLuaCode(extractedOn ?: raw)
     }
 
     fun resolveWidgetOffLogic(component: CanvasComponentEntity): String {
@@ -95,11 +129,12 @@ object LuaScriptEngine {
             rawOff.startsWith("/data/") ||
             rawOff.startsWith("/storage/")
         if (!isLegacyOff) {
-            return rawOff
+            val extractedOffFromOff = extractIfStateBranch(rawOff, wantOnBranch = false)
+            return normalizeGameGuardianLuaCode(extractedOffFromOff ?: rawOff)
         }
-        val onLogic = resolveWidgetButtonLogic(component)
-        if (onLogic.contains("if state") || onLogic.contains("if not state")) {
-            return onLogic
+        val extractedOffFromOn = extractIfStateBranch(component.onPayloadHex.trim(), wantOnBranch = false)
+        if (extractedOffFromOn != null) {
+            return normalizeGameGuardianLuaCode(extractedOffFromOn)
         }
         return defaultOffLogicForWidget(component.label, component.type)
     }
@@ -111,12 +146,13 @@ object LuaScriptEngine {
         val luaWidgets = components.filter { !isScreen1WidgetType(it.type) }
         val rawTitle = project.overlayTitle.ifBlank { project.name.ifBlank { "PC PANEL" } }
         val formattedHeader = formatLuaPanelHeaderTitle(rawTitle)
+        val exitIdx = luaWidgets.size + 1
 
-        return buildString {
+        val generated = buildString {
             appendLine("gg.setVisible(false)")
+            appendLine("gg.showUiButton()")
             appendLine()
             appendLine("local running = true")
-            appendLine("local hidden = false")
             if (luaWidgets.isNotEmpty()) {
                 appendLine()
                 luaWidgets.forEachIndexed { index, comp ->
@@ -126,77 +162,61 @@ object LuaScriptEngine {
             }
             appendLine()
             appendLine("local function panel()")
-            appendLine("    if not running then return end")
-            appendLine()
-            appendLine("    local c = gg.choice({")
+            appendLine("    while running do")
+            appendLine("        local c = gg.choice({")
             luaWidgets.forEachIndexed { index, comp ->
                 val escapedLabel = escapeLuaString(comp.label)
                 if (comp.type == ComponentWidgetType.TEXT.name) {
-                    appendLine("        \"$escapedLabel\",")
+                    appendLine("            \"$escapedLabel\",")
                 } else {
-                    appendLine("        (switch_${index + 1}.state and \"[ 🟢 ON ]  \" or \"[ ⚪ OFF ] \") .. \"$escapedLabel\",")
+                    appendLine("            (switch_${index + 1}.state and \"[ 🟢 ON ]  \" or \"[ ⚪ OFF ] \") .. \"$escapedLabel\",")
                 }
             }
-            appendLine("        \"➖  MINIMIZE\",")
-            appendLine("        \"🙈  HIDE\",")
-            appendLine("        \"❌  KILL\"")
-            appendLine("    }, nil, \"${escapeLuaString(formattedHeader)}\")")
+            appendLine("            \"Exit\"")
+            appendLine("        }, nil, \"${escapeLuaString(formattedHeader)}\")")
             appendLine()
-
-            val minIdx = luaWidgets.size + 1
-            val hideIdx = luaWidgets.size + 2
-            val killIdx = luaWidgets.size + 3
-
-            if (luaWidgets.isNotEmpty()) {
-                luaWidgets.forEachIndexed { index, comp ->
-                    val choiceIdx = index + 1
-                    val keyword = if (index == 0) "if" else "elseif"
-                    appendLine("    $keyword c == $choiceIdx then")
-                    if (comp.type == ComponentWidgetType.TEXT.name) {
-                        val logicLines = resolveWidgetButtonLogic(comp).lines()
-                        logicLines.forEach { line ->
-                            appendLine("        $line")
-                        }
-                    } else {
-                        appendLine("        switch_$choiceIdx.state = not switch_$choiceIdx.state")
-                        appendLine("        local state = switch_$choiceIdx.state")
-                        val onLines = resolveWidgetButtonLogic(comp).lines()
-                        val offLines = resolveWidgetOffLogic(comp).lines()
-                        appendLine("        if state then")
-                        onLines.forEach { line ->
-                            appendLine("            $line")
-                        }
-                        appendLine("        else")
-                        offLines.forEach { line ->
-                            appendLine("            $line")
-                        }
-                        appendLine("        end")
+            appendLine("        if c == nil then")
+            appendLine("            break")
+            luaWidgets.forEachIndexed { index, comp ->
+                val choiceIdx = index + 1
+                appendLine("        elseif c == $choiceIdx then")
+                if (comp.type == ComponentWidgetType.TEXT.name) {
+                    val logicLines = resolveWidgetButtonLogic(comp).lines()
+                    logicLines.forEach { line ->
+                        appendLine("            $line")
                     }
+                } else {
+                    appendLine("            switch_$choiceIdx.state = not switch_$choiceIdx.state")
+                    appendLine("            local state = switch_$choiceIdx.state")
+                    val onLines = resolveWidgetButtonLogic(comp).lines()
+                    val offLines = resolveWidgetOffLogic(comp).lines()
+                    appendLine("            if state then")
+                    onLines.forEach { line ->
+                        appendLine("                $line")
+                    }
+                    appendLine("            else")
+                    offLines.forEach { line ->
+                        appendLine("                $line")
+                    }
+                    appendLine("            end")
                 }
-                appendLine("    elseif c == $minIdx then")
-            } else {
-                appendLine("    if c == $minIdx then")
             }
-            appendLine("        hidden = true")
-            appendLine("        gg.setVisible(false)")
-            appendLine("    elseif c == $hideIdx then")
-            appendLine("        hidden = true")
-            appendLine("        gg.setVisible(false)")
-            appendLine("    elseif c == $killIdx then")
-            appendLine("        running = false")
-            appendLine("        os.exit()")
+            appendLine("        elseif c == $exitIdx then")
+            appendLine("            running = false")
+            appendLine("            gg.hideUiButton()")
+            appendLine("            os.exit()")
+            appendLine("            break")
+            appendLine("        end")
             appendLine("    end")
             appendLine("end")
             appendLine()
-            appendLine("gg.showUiButton()")
+            appendLine("panel()")
             appendLine()
             appendLine("while running do")
             appendLine("    if gg.isClickedUiButton() then")
-            appendLine("        hidden = false")
+            appendLine("        gg.setVisible(false)")
             appendLine("        panel()")
-            appendLine("    end")
-            appendLine()
-            appendLine("    if not hidden and gg.isVisible(true) then")
+            appendLine("    elseif gg.isVisible(true) then")
             appendLine("        gg.setVisible(false)")
             appendLine("        panel()")
             appendLine("    end")
@@ -204,6 +224,7 @@ object LuaScriptEngine {
             appendLine("    gg.sleep(100)")
             append("end")
         }
+        return normalizeGameGuardianLuaCode(generated)
     }
 
     @JvmStatic
@@ -271,6 +292,7 @@ object LuaScriptEngine {
         var lastToast: String? = null
         var lastAlert: String? = null
         var openedUrl: String? = null
+        var exited = false
 
         val env = mutableMapOf<String, Any?>(
             "label" to component.label,
@@ -371,6 +393,11 @@ object LuaScriptEngine {
                     openedUrl = targetUrl
                     logs.add("[OpenLink] $targetUrl")
                 }
+                line.startsWith("os.exit(") -> {
+                    exited = true
+                    logs.add("[Exit] Script terminated via os.exit()")
+                    break
+                }
                 line.contains("=") && !line.contains("==") && !line.contains("~=") -> {
                     val varName = line.substringBefore("=").trim()
                     val expr = line.substringAfter("=").trim()
@@ -390,7 +417,8 @@ object LuaScriptEngine {
             logs = logs,
             toastMessage = lastToast,
             alertMessage = lastAlert,
-            openedUrl = openedUrl
+            openedUrl = openedUrl,
+            exited = exited
         )
     }
 
@@ -515,8 +543,9 @@ object LuaScriptEngine {
         customScriptOverride: String? = null
     ): LuaSaveResult {
         val fileName = scriptFileNameForProject(project)
-        val scriptContent = customScriptOverride?.takeIf { it.isNotBlank() }
+        val rawScriptContent = customScriptOverride?.takeIf { it.isNotBlank() }
             ?: generateLuaScript(project, components)
+        val scriptContent = normalizeGameGuardianLuaCode(rawScriptContent)
         val scriptBytes = scriptContent.toByteArray(Charsets.UTF_8)
 
         val localLuaDir = File(context.filesDir, "saved_lua_scripts").apply { mkdirs() }

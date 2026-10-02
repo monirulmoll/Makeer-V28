@@ -742,45 +742,8 @@ extends Service {
         titleLp.leftMargin = this.dpToPx(6);
         titleLp.rightMargin = this.dpToPx(6);
 
-        // Minimized Sx floating button (gg.showUiButton())
-        final TextView sxFloatingBtn = new TextView((Context)this);
-        sxFloatingBtn.setText((CharSequence)"Sx");
-        sxFloatingBtn.setTextColor(-1);
-        sxFloatingBtn.setTextSize(2, 13.0f);
-        sxFloatingBtn.setTypeface(Typeface.DEFAULT_BOLD);
-        sxFloatingBtn.setGravity(17);
-        GradientDrawable sxFloatBg = new GradientDrawable();
-        sxFloatBg.setColor(Color.parseColor((String)"#1E1B4B"));
-        sxFloatBg.setCornerRadius((float)this.dpToPx(8));
-        sxFloatBg.setStroke(this.dpToPx(2), Color.parseColor((String)"#A855F7"));
-        sxFloatingBtn.setBackground((Drawable)sxFloatBg);
-        sxFloatingBtn.setVisibility(8);
-
-        final Runnable minimizeToSxButton = () -> {
-            dialogCard.setVisibility(8);
-            sxFloatingBtn.setAlpha(1.0f);
-            sxFloatingBtn.setVisibility(0);
-            if (this.overlayLayoutParams != null && this.floatingRootView != null && this.windowManager != null) {
-                this.overlayLayoutParams.width = sxBubbleW;
-                this.overlayLayoutParams.height = sxBubbleH;
-                this.windowManager.updateViewLayout(this.floatingRootView, (ViewGroup.LayoutParams)this.overlayLayoutParams);
-            }
-        };
-
-        final Runnable hideToSxButton = () -> {
-            dialogCard.setVisibility(8);
-            sxFloatingBtn.setAlpha(0.55f);
-            sxFloatingBtn.setVisibility(0);
-            if (this.overlayLayoutParams != null && this.floatingRootView != null && this.windowManager != null) {
-                this.overlayLayoutParams.width = sxBubbleW;
-                this.overlayLayoutParams.height = sxBubbleH;
-                this.windowManager.updateViewLayout(this.floatingRootView, (ViewGroup.LayoutParams)this.overlayLayoutParams);
-            }
-            Toast.makeText((Context)this, (CharSequence)"Floating Panel Hidden (Tap Sx to show)", (int)0).show();
-        };
-
-        final Runnable killLuaPanel = () -> {
-            Toast.makeText((Context)this, (CharSequence)"Script terminated (os.exit)", (int)0).show();
+        final Runnable exitLuaPanel = () -> {
+            Toast.makeText((Context)this, (CharSequence)"Script terminated (Exit)", (int)0).show();
             this.removeSystemOverlayWindow();
             running = false;
             try {
@@ -790,60 +753,26 @@ extends Service {
             this.stopSelf();
         };
 
-        // Top-Right Header Controls: [Minimize] [Hide] [Kill]
-        TextView minHeaderBtn = new TextView((Context)this);
-        minHeaderBtn.setText((CharSequence)"Minimize");
-        minHeaderBtn.setTextColor(-1);
-        minHeaderBtn.setTextSize(2, 8.5f);
-        minHeaderBtn.setTypeface(Typeface.DEFAULT_BOLD);
-        minHeaderBtn.setGravity(17);
-        minHeaderBtn.setPadding(this.dpToPx(5), this.dpToPx(3), this.dpToPx(5), this.dpToPx(3));
-        GradientDrawable minHeaderBg = new GradientDrawable();
-        minHeaderBg.setColor(Color.parseColor((String)"#374151"));
-        minHeaderBg.setCornerRadius((float)this.dpToPx(5));
-        minHeaderBg.setStroke(this.dpToPx(1), Color.parseColor((String)"#9CA3AF"));
-        minHeaderBtn.setBackground((Drawable)minHeaderBg);
-        LinearLayout.LayoutParams minHeaderLp = new LinearLayout.LayoutParams(-2, -2);
-        minHeaderLp.rightMargin = this.dpToPx(4);
-        minHeaderBtn.setOnClickListener(v -> minimizeToSxButton.run());
-
-        TextView hideHeaderBtn = new TextView((Context)this);
-        hideHeaderBtn.setText((CharSequence)"Hide");
-        hideHeaderBtn.setTextColor(Color.parseColor((String)"#BAE6FD"));
-        hideHeaderBtn.setTextSize(2, 8.5f);
-        hideHeaderBtn.setTypeface(Typeface.DEFAULT_BOLD);
-        hideHeaderBtn.setGravity(17);
-        hideHeaderBtn.setPadding(this.dpToPx(5), this.dpToPx(3), this.dpToPx(5), this.dpToPx(3));
-        GradientDrawable hideHeaderBg = new GradientDrawable();
-        hideHeaderBg.setColor(Color.parseColor((String)"#1E293B"));
-        hideHeaderBg.setCornerRadius((float)this.dpToPx(5));
-        hideHeaderBg.setStroke(this.dpToPx(1), Color.parseColor((String)"#38BDF8"));
-        hideHeaderBtn.setBackground((Drawable)hideHeaderBg);
-        LinearLayout.LayoutParams hideHeaderLp = new LinearLayout.LayoutParams(-2, -2);
-        hideHeaderLp.rightMargin = this.dpToPx(4);
-        hideHeaderBtn.setOnClickListener(v -> hideToSxButton.run());
-
-        TextView killHeaderBtn = new TextView((Context)this);
-        killHeaderBtn.setText((CharSequence)"Kill");
-        killHeaderBtn.setTextColor(-1);
-        killHeaderBtn.setTextSize(2, 8.5f);
-        killHeaderBtn.setTypeface(Typeface.DEFAULT_BOLD);
-        killHeaderBtn.setGravity(17);
-        killHeaderBtn.setPadding(this.dpToPx(5), this.dpToPx(3), this.dpToPx(5), this.dpToPx(3));
-        GradientDrawable killHeaderBg = new GradientDrawable();
-        killHeaderBg.setColor(Color.parseColor((String)"#EF4444"));
-        killHeaderBg.setCornerRadius((float)this.dpToPx(5));
-        killHeaderBg.setStroke(this.dpToPx(1), Color.parseColor((String)"#FCA5A5"));
-        killHeaderBtn.setBackground((Drawable)killHeaderBg);
-        killHeaderBtn.setOnClickListener(v -> killLuaPanel.run());
+        // Top-Right Header Control: ONLY [ Exit ]
+        TextView exitHeaderBtn = new TextView((Context)this);
+        exitHeaderBtn.setText((CharSequence)"Exit");
+        exitHeaderBtn.setTextColor(-1);
+        exitHeaderBtn.setTextSize(2, 10.0f);
+        exitHeaderBtn.setTypeface(Typeface.DEFAULT_BOLD);
+        exitHeaderBtn.setGravity(17);
+        exitHeaderBtn.setPadding(this.dpToPx(9), this.dpToPx(4), this.dpToPx(9), this.dpToPx(4));
+        GradientDrawable exitHeaderBg = new GradientDrawable();
+        exitHeaderBg.setColor(Color.parseColor((String)"#EF4444"));
+        exitHeaderBg.setCornerRadius((float)this.dpToPx(6));
+        exitHeaderBg.setStroke(this.dpToPx(1), Color.parseColor((String)"#FCA5A5"));
+        exitHeaderBtn.setBackground((Drawable)exitHeaderBg);
+        exitHeaderBtn.setOnClickListener(v -> exitLuaPanel.run());
 
         topHeader.addView((View)sxBadge);
         topHeader.addView((View)headerTitleTv, (ViewGroup.LayoutParams)titleLp);
-        topHeader.addView((View)minHeaderBtn, (ViewGroup.LayoutParams)minHeaderLp);
-        topHeader.addView((View)hideHeaderBtn, (ViewGroup.LayoutParams)hideHeaderLp);
-        topHeader.addView((View)killHeaderBtn);
+        topHeader.addView((View)exitHeaderBtn);
 
-        // Scrollable user widget rows (Header controls are NOT included in widget count!)
+        // Scrollable user widget rows (Exit is an internal header control and NEVER included in widget count!)
         ScrollView choiceScroll = new ScrollView((Context)this);
         LinearLayout choiceList = new LinearLayout((Context)this);
         choiceList.setOrientation(1);
@@ -852,6 +781,7 @@ extends Service {
         final boolean[] widgetStates = new boolean[totalWidgets];
         final TextView[] statePillViews = new TextView[totalWidgets];
         final TextView[] toggleBadgeViews = new TextView[totalWidgets];
+        final TextView footerCountTv = new TextView((Context)this);
 
         for (int idx = 0; idx < totalWidgets; idx++) {
             DynamicOverlayRegistry.OverlayItemSpec s = specs.get(idx);
@@ -860,8 +790,14 @@ extends Service {
         }
 
         final Runnable refreshAllToggleVisuals = () -> {
+            int activeOn = 0;
             for (int idx = 0; idx < totalWidgets; idx++) {
                 boolean isOn = widgetStates[idx];
+                DynamicOverlayRegistry.OverlayItemSpec s = specs.get(idx);
+                boolean isTxt = s != null && "TEXT".equalsIgnoreCase(s.type);
+                if (isOn && !isTxt) {
+                    activeOn++;
+                }
                 TextView pill = statePillViews[idx];
                 if (pill != null) {
                     pill.setText((CharSequence)(isOn ? "\ud83d\udfe2 ON" : "\u26aa OFF"));
@@ -883,6 +819,7 @@ extends Service {
                     rightToggle.setBackground((Drawable)rtBg);
                 }
             }
+            footerCountTv.setText((CharSequence)(totalWidgets + " Widgets  \u2022  " + activeOn + " ON"));
         };
 
         for (int i = 0; i < totalWidgets; i++) {
@@ -954,34 +891,29 @@ extends Service {
 
         choiceScroll.addView((View)choiceList, (ViewGroup.LayoutParams)new FrameLayout.LayoutParams(-1, -2));
 
-        // Bottom Footer: CANCEL / OK
+        // Bottom Footer: User Widget Count + Tap Switch hint (Exit is NOT counted as a widget)
         LinearLayout footer = new LinearLayout((Context)this);
         footer.setOrientation(0);
-        footer.setGravity(21);
-        footer.setPadding(this.dpToPx(12), this.dpToPx(6), this.dpToPx(12), this.dpToPx(8));
+        footer.setGravity(16);
+        footer.setPadding(this.dpToPx(12), this.dpToPx(7), this.dpToPx(12), this.dpToPx(8));
         GradientDrawable footerBg = new GradientDrawable();
         footerBg.setColor(Color.parseColor((String)"#21252B"));
         footerBg.setCornerRadii(new float[]{0f, 0f, 0f, 0f, rTop, rTop, rTop, rTop});
         footer.setBackground((Drawable)footerBg);
 
-        TextView cancelBtn = new TextView((Context)this);
-        cancelBtn.setText((CharSequence)"CANCEL");
-        cancelBtn.setTextColor(Color.parseColor((String)"#C084FC"));
-        cancelBtn.setTextSize(2, 11.5f);
-        cancelBtn.setTypeface(Typeface.DEFAULT_BOLD);
-        cancelBtn.setPadding(this.dpToPx(10), this.dpToPx(4), this.dpToPx(10), this.dpToPx(4));
-        cancelBtn.setOnClickListener(v -> minimizeToSxButton.run());
+        footerCountTv.setTextColor(Color.parseColor((String)"#9CA3AF"));
+        footerCountTv.setTextSize(2, 10.5f);
+        footerCountTv.setTypeface(Typeface.MONOSPACE, Typeface.BOLD);
+        LinearLayout.LayoutParams footerCountLp = new LinearLayout.LayoutParams(0, -2, 1.0f);
 
-        TextView okBtn = new TextView((Context)this);
-        okBtn.setText((CharSequence)"OK");
-        okBtn.setTextColor(Color.parseColor((String)"#C084FC"));
-        okBtn.setTextSize(2, 11.5f);
-        okBtn.setTypeface(Typeface.DEFAULT_BOLD);
-        okBtn.setPadding(this.dpToPx(12), this.dpToPx(4), this.dpToPx(10), this.dpToPx(4));
-        okBtn.setOnClickListener(v -> minimizeToSxButton.run());
+        TextView footerHintTv = new TextView((Context)this);
+        footerHintTv.setText((CharSequence)"Tap Switch to Toggle");
+        footerHintTv.setTextColor(Color.parseColor((String)"#34D399"));
+        footerHintTv.setTextSize(2, 10.0f);
+        footerHintTv.setTypeface(Typeface.DEFAULT_BOLD);
 
-        footer.addView((View)cancelBtn);
-        footer.addView((View)okBtn);
+        footer.addView((View)footerCountTv, (ViewGroup.LayoutParams)footerCountLp);
+        footer.addView((View)footerHintTv);
 
         topHeader.setOnTouchListener(new View.OnTouchListener(){
             private float downRawX;
@@ -1015,63 +947,11 @@ extends Service {
             }
         });
 
-        final int touchSlop = ViewConfiguration.get((Context)this).getScaledTouchSlop();
-        sxFloatingBtn.setOnTouchListener(new View.OnTouchListener(){
-            private float downRawX;
-            private float downRawY;
-            private int startWinX;
-            private int startWinY;
-            private boolean wasDragged;
-
-            public boolean onTouch(View v, MotionEvent event) {
-                switch (event.getActionMasked()) {
-                    case 0: {
-                        this.downRawX = event.getRawX();
-                        this.downRawY = event.getRawY();
-                        this.startWinX = FloatingDashboardService.this.overlayLayoutParams.x;
-                        this.startWinY = FloatingDashboardService.this.overlayLayoutParams.y;
-                        this.wasDragged = false;
-                        return true;
-                    }
-                    case 2: {
-                        int totalDx = Math.round(event.getRawX() - this.downRawX);
-                        int totalDy = Math.round(event.getRawY() - this.downRawY);
-                        if (Math.abs(totalDx) > touchSlop || Math.abs(totalDy) > touchSlop) {
-                            this.wasDragged = true;
-                        }
-                        int nextX = Math.max(0, this.startWinX + totalDx);
-                        int nextY = Math.max(32, this.startWinY + totalDy);
-                        if (FloatingDashboardService.this.floatingRootView != null && FloatingDashboardService.this.windowManager != null) {
-                            FloatingDashboardService.this.overlayLayoutParams.x = nextX;
-                            FloatingDashboardService.this.overlayLayoutParams.y = nextY;
-                            FloatingDashboardService.this.windowManager.updateViewLayout(FloatingDashboardService.this.floatingRootView, (ViewGroup.LayoutParams)FloatingDashboardService.this.overlayLayoutParams);
-                        }
-                        return true;
-                    }
-                    case 1: {
-                        if (!this.wasDragged) {
-                            sxFloatingBtn.setAlpha(1.0f);
-                            sxFloatingBtn.setVisibility(8);
-                            dialogCard.setVisibility(0);
-                            if (FloatingDashboardService.this.overlayLayoutParams != null && FloatingDashboardService.this.floatingRootView != null && FloatingDashboardService.this.windowManager != null) {
-                                FloatingDashboardService.this.overlayLayoutParams.width = dialogW;
-                                FloatingDashboardService.this.overlayLayoutParams.height = dialogH;
-                                FloatingDashboardService.this.windowManager.updateViewLayout(FloatingDashboardService.this.floatingRootView, (ViewGroup.LayoutParams)FloatingDashboardService.this.overlayLayoutParams);
-                            }
-                        }
-                        return true;
-                    }
-                }
-                return false;
-            }
-        });
-
         dialogCard.addView((View)topHeader, (ViewGroup.LayoutParams)new LinearLayout.LayoutParams(-1, -2));
         dialogCard.addView((View)choiceScroll, (ViewGroup.LayoutParams)new LinearLayout.LayoutParams(-1, 0, 1.0f));
         dialogCard.addView((View)footer, (ViewGroup.LayoutParams)new LinearLayout.LayoutParams(-1, -2));
 
         rootWrapper.addView((View)dialogCard, (ViewGroup.LayoutParams)new FrameLayout.LayoutParams(dialogW, dialogH));
-        rootWrapper.addView((View)sxFloatingBtn, (ViewGroup.LayoutParams)new FrameLayout.LayoutParams(sxBubbleW, sxBubbleH));
 
         synchronized (OVERLAY_LOCK) {
             if (sActiveFloatingRootView != null && sActiveWindowManager != null) {
@@ -1849,6 +1729,15 @@ extends Service {
             }
             if (msg != null && !msg.trim().isEmpty()) {
                 Toast.makeText((Context)this, (CharSequence)msg, (int)0).show();
+            }
+            if (res.getExited()) {
+                this.removeSystemOverlayWindow();
+                running = false;
+                try {
+                    this.stopForeground(true);
+                } catch (Throwable ignored) {
+                }
+                this.stopSelf();
             }
         } catch (Throwable ignored) {
         }

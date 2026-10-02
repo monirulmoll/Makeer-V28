@@ -1986,13 +1986,14 @@ fun LuaChoiceMenuPreviewCanvas(
         LuaScriptEngine.formatLuaPanelHeaderTitle(raw)
     }
 
-    var isLuaMinimized by remember(project.id) { mutableStateOf(false) }
-    var isLuaHidden by remember(project.id) { mutableStateOf(false) }
     var isLuaRunning by remember(project.id) { mutableStateOf(true) }
 
     // Per-widget independent ON/OFF state map (syncs with comp.currentValue & updates instantaneously on tap)
     val widgetStates = remember(project.id) { androidx.compose.runtime.mutableStateMapOf<Long, Boolean>() }
     LaunchedEffect(components) {
+        val currentIds = components.map { it.id }.toSet()
+        val staleIds = widgetStates.keys.filter { it !in currentIds }
+        staleIds.forEach { widgetStates.remove(it) }
         components.forEach { comp ->
             val dbOn = comp.currentValue == "1" || comp.currentValue.equals("true", ignoreCase = true)
             widgetStates[comp.id] = dbOn
@@ -2034,11 +2035,11 @@ fun LuaChoiceMenuPreviewCanvas(
                             modifier = Modifier
                                 .size(6.dp)
                                 .clip(CircleShape)
-                                .background(Color(0xFF10B981))
+                                .background(if (isLuaRunning) Color(0xFF10B981) else Color(0xFFEF4444))
                         )
                         Text(
-                            text = "gg.choice()",
-                            color = Color(0xFF34D399),
+                            text = if (isLuaRunning) "gg.choice() • Active" else "Script Terminated",
+                            color = if (isLuaRunning) Color(0xFF34D399) else Color(0xFFF87171),
                             fontSize = 11.sp,
                             fontFamily = FontFamily.Monospace,
                             fontWeight = FontWeight.Bold
@@ -2046,7 +2047,7 @@ fun LuaChoiceMenuPreviewCanvas(
                     }
 
                     Text(
-                        text = if (isLivePreviewMode) "RUN MODE (Tap item to run)" else "EDIT MODE (Tap item to edit)",
+                        text = if (isLivePreviewMode) "RUN MODE (Tap switch to toggle)" else "EDIT MODE (Tap switch to toggle/edit)",
                         color = if (isLivePreviewMode) Color(0xFF34D399) else Color(0xFF94A3B8),
                         fontSize = 9.5.sp,
                         fontWeight = FontWeight.Bold
@@ -2084,21 +2085,21 @@ fun LuaChoiceMenuPreviewCanvas(
                     contentAlignment = Alignment.Center
                 ) {
                     if (!isLuaRunning) {
-                        // GameGuardian "Script ended:" dialog when Kill is clicked
+                        // GameGuardian "Script ended:" dialog when Exit is clicked
                         Surface(
                             shape = RoundedCornerShape(8.dp),
                             color = Color(0xFF2A1215),
                             border = BorderStroke(1.dp, Color(0xFFEF4444)),
                             modifier = Modifier
                                 .fillMaxWidth(0.92f)
-                                .testTag("lua_killed_state_card")
+                                .testTag("lua_exited_state_card")
                         ) {
                             Column(
                                 modifier = Modifier.padding(16.dp),
                                 verticalArrangement = Arrangement.spacedBy(12.dp)
                             ) {
                                 Text(
-                                    text = "✖ Floating Panel Terminated (Kill)\nos.exit() executed — Lua runtime stopped.",
+                                    text = "✖ Floating Panel Closed (Exit)\nos.exit() executed — Lua runtime & event loop terminated.",
                                     color = Color(0xFFFCA5A5),
                                     fontSize = 12.5.sp,
                                     fontWeight = FontWeight.Bold
@@ -2114,8 +2115,6 @@ fun LuaChoiceMenuPreviewCanvas(
                                         modifier = Modifier
                                             .clickable {
                                                 isLuaRunning = true
-                                                isLuaHidden = false
-                                                isLuaMinimized = false
                                             }
                                             .testTag("lua_restart_panel_button")
                                     ) {
@@ -2130,79 +2129,8 @@ fun LuaChoiceMenuPreviewCanvas(
                                 }
                             }
                         }
-                    } else if (isLuaMinimized) {
-                        // Minimized Floating Panel state when [Minimize] is tapped
-                        Column(
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            verticalArrangement = Arrangement.spacedBy(10.dp)
-                        ) {
-                            Surface(
-                                shape = RoundedCornerShape(99.dp),
-                                color = Color(0xFF1E1B4B),
-                                border = BorderStroke(2.dp, Color(0xFF8B5CF6)),
-                                modifier = Modifier
-                                    .size(64.dp)
-                                    .clickable {
-                                        isLuaMinimized = false
-                                        isLuaHidden = false
-                                    }
-                                    .testTag("lua_minimized_bubble_button")
-                            ) {
-                                Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
-                                    Text(
-                                        text = "Sx",
-                                        color = Color(0xFF38BDF8),
-                                        fontSize = 17.sp,
-                                        fontWeight = FontWeight.ExtraBold
-                                    )
-                                }
-                            }
-                            Text(
-                                text = "Floating Panel Minimized — Tap 'Sx' bubble to expand",
-                                color = Color(0xFF94A3B8),
-                                fontSize = 10.5.sp,
-                                fontWeight = FontWeight.SemiBold
-                            )
-                        }
-                    } else if (isLuaHidden) {
-                        // Hidden Floating Panel state when [Hide] is tapped (hidden = true; gg.setVisible(false))
-                        Column(
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                            verticalArrangement = Arrangement.spacedBy(10.dp)
-                        ) {
-                            Surface(
-                                shape = RoundedCornerShape(99.dp),
-                                color = Color(0xFF1E293B),
-                                border = BorderStroke(1.dp, Color(0xFF38BDF8)),
-                                modifier = Modifier
-                                    .clickable {
-                                        isLuaHidden = false
-                                        isLuaMinimized = false
-                                    }
-                                    .testTag("lua_sx_ui_button")
-                            ) {
-                                Row(
-                                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                                ) {
-                                    Text(
-                                        text = "Sx",
-                                        color = Color(0xFF38BDF8),
-                                        fontSize = 13.sp,
-                                        fontWeight = FontWeight.ExtraBold
-                                    )
-                                    Text(
-                                        text = "Panel Hidden (gg.setVisible(false)) — Tap to Show",
-                                        color = Color(0xFFE2E8F0),
-                                        fontSize = 11.sp,
-                                        fontWeight = FontWeight.Bold
-                                    )
-                                }
-                            }
-                        }
                     } else {
-                        // Authentic GameGuardian Floating Panel Dialog with Top-Right [Minimize] [Hide] [Kill] Controls
+                        // Authentic GameGuardian Floating Panel Dialog with Top-Right [ Exit ] Control ONLY
                         Surface(
                             shape = RoundedCornerShape(8.dp),
                             color = Color(0xFF303338),
@@ -2213,29 +2141,29 @@ fun LuaChoiceMenuPreviewCanvas(
                                 .testTag("lua_gg_choice_dialog")
                         ) {
                             Column(modifier = Modifier.fillMaxWidth()) {
-                                // Floating Window Header Bar: Left = Panel Title, Right = [Minimize] [Hide] [Kill]
+                                // Floating Window Header Bar: Left = Panel Title, Right = [ Exit ]
                                 Row(
                                     modifier = Modifier
                                         .fillMaxWidth()
                                         .background(Color(0xFF24272B))
-                                        .padding(horizontal = 10.dp, vertical = 9.dp)
+                                        .padding(horizontal = 12.dp, vertical = 9.dp)
                                         .testTag("floating_panel_header_bar"),
                                     horizontalArrangement = Arrangement.SpaceBetween,
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    // Title area (tap to edit panel title) — isolated from header control buttons
+                                    // Title area (tap to edit panel title) — isolated from Exit control
                                     Row(
                                         modifier = Modifier
                                             .weight(1f)
                                             .clickable { onOpenEditFloatingPanel() }
-                                            .padding(end = 6.dp),
+                                            .padding(end = 8.dp),
                                         verticalAlignment = Alignment.CenterVertically,
                                         horizontalArrangement = Arrangement.spacedBy(5.dp)
                                     ) {
                                         Text(
                                             text = formattedTitle,
                                             color = Color.White,
-                                            fontSize = 12.sp,
+                                            fontSize = 12.5.sp,
                                             fontWeight = FontWeight.Bold,
                                             maxLines = 1,
                                             overflow = TextOverflow.Ellipsis,
@@ -2249,82 +2177,32 @@ fun LuaChoiceMenuPreviewCanvas(
                                         )
                                     }
 
-                                    // Top-Right Floating Window Controls: [Minimize] [Hide] [Kill]
-                                    Row(
-                                        verticalAlignment = Alignment.CenterVertically,
-                                        horizontalArrangement = Arrangement.spacedBy(5.dp)
+                                    // Single Top-Right Floating Window Control: [ Exit ]
+                                    Surface(
+                                        shape = RoundedCornerShape(6.dp),
+                                        color = Color(0xFFEF4444).copy(alpha = 0.9f),
+                                        border = BorderStroke(1.dp, Color(0xFFFCA5A5)),
+                                        modifier = Modifier
+                                            .clickable {
+                                                onSelectComponent(null)
+                                                isLuaRunning = false
+                                            }
+                                            .testTag("lua_header_exit_button")
                                     ) {
-                                        Surface(
-                                            shape = RoundedCornerShape(6.dp),
-                                            color = Color(0xFF374151),
-                                            border = BorderStroke(1.dp, Color(0xFF9CA3AF)),
-                                            modifier = Modifier
-                                                .clickable {
-                                                    isLuaRunning = true
-                                                    isLuaHidden = false
-                                                    isLuaMinimized = true
-                                                }
-                                                .testTag("lua_header_minimize_button")
-                                        ) {
-                                            Text(
-                                                text = "Minimize",
-                                                color = Color.White,
-                                                fontSize = 9.5.sp,
-                                                fontWeight = FontWeight.Bold,
-                                                maxLines = 1,
-                                                modifier = Modifier.padding(horizontal = 7.dp, vertical = 4.dp)
-                                            )
-                                        }
-
-                                        Surface(
-                                            shape = RoundedCornerShape(6.dp),
-                                            color = Color(0xFF1E293B),
-                                            border = BorderStroke(1.dp, Color(0xFF38BDF8)),
-                                            modifier = Modifier
-                                                .clickable {
-                                                    isLuaRunning = true
-                                                    isLuaMinimized = false
-                                                    isLuaHidden = true
-                                                }
-                                                .testTag("lua_header_hide_button")
-                                        ) {
-                                            Text(
-                                                text = "Hide",
-                                                color = Color(0xFFBAE6FD),
-                                                fontSize = 9.5.sp,
-                                                fontWeight = FontWeight.Bold,
-                                                maxLines = 1,
-                                                modifier = Modifier.padding(horizontal = 7.dp, vertical = 4.dp)
-                                            )
-                                        }
-
-                                        Surface(
-                                            shape = RoundedCornerShape(6.dp),
-                                            color = Color(0xFFEF4444).copy(alpha = 0.9f),
-                                            border = BorderStroke(1.dp, Color(0xFFFCA5A5)),
-                                            modifier = Modifier
-                                                .clickable {
-                                                    isLuaMinimized = false
-                                                    isLuaHidden = false
-                                                    isLuaRunning = false
-                                                }
-                                                .testTag("lua_header_kill_button")
-                                        ) {
-                                            Text(
-                                                text = "Kill",
-                                                color = Color.White,
-                                                fontSize = 9.5.sp,
-                                                fontWeight = FontWeight.Bold,
-                                                maxLines = 1,
-                                                modifier = Modifier.padding(horizontal = 7.dp, vertical = 4.dp)
-                                            )
-                                        }
+                                        Text(
+                                            text = "Exit",
+                                            color = Color.White,
+                                            fontSize = 10.5.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            maxLines = 1,
+                                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                                        )
                                     }
                                 }
 
                                 HorizontalDivider(color = Color(0xFF4B5563), thickness = 1.dp)
 
-                                // Scrollable User Widgets List (Header controls are NOT included in widget count!)
+                                // Scrollable User Widgets List (Exit is an internal header control and NEVER included in widget count!)
                                 Column(
                                     modifier = Modifier
                                         .weight(1f, fill = false)
@@ -2398,16 +2276,8 @@ fun LuaChoiceMenuPreviewCanvas(
                                                         verticalAlignment = Alignment.CenterVertically,
                                                         horizontalArrangement = Arrangement.spacedBy(5.dp)
                                                     ) {
-                                                        Box(
-                                                            modifier = Modifier
-                                                                .size(8.dp)
-                                                                .clip(CircleShape)
-                                                                .background(
-                                                                    if (isWidgetOn) Color(0xFF10B981) else Color(0xFF9CA3AF)
-                                                                )
-                                                        )
                                                         Text(
-                                                            text = if (isWidgetOn) "ON" else "OFF",
+                                                            text = if (isWidgetOn) "🟢 ON" else "⚪ OFF",
                                                             color = if (isWidgetOn) Color(0xFF6EE7B7) else Color(0xFF9CA3AF),
                                                             fontSize = 10.5.sp,
                                                             fontWeight = FontWeight.ExtraBold,
@@ -2480,7 +2350,7 @@ fun LuaChoiceMenuPreviewCanvas(
                                     }
                                 }
 
-                                // Dialog Footer: Active ON count + Minimize / OK
+                                // Dialog Footer: User Widget Count + Active ON Count (Exit is NOT counted as a widget)
                                 val activeOnCount = components.count { comp ->
                                     comp.type != ComponentWidgetType.TEXT.name &&
                                         (widgetStates[comp.id] ?: (comp.currentValue == "1" || comp.currentValue.equals("true", ignoreCase = true)))
@@ -2489,7 +2359,7 @@ fun LuaChoiceMenuPreviewCanvas(
                                     modifier = Modifier
                                         .fillMaxWidth()
                                         .background(Color(0xFF24272B))
-                                        .padding(horizontal = 12.dp, vertical = 7.dp),
+                                        .padding(horizontal = 12.dp, vertical = 8.dp),
                                     horizontalArrangement = Arrangement.SpaceBetween,
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
@@ -2500,38 +2370,12 @@ fun LuaChoiceMenuPreviewCanvas(
                                         fontFamily = FontFamily.Monospace,
                                         fontWeight = FontWeight.SemiBold
                                     )
-                                    Row(
-                                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        TextButton(onClick = { isLuaHidden = true }) {
-                                            Text(
-                                                text = "CANCEL",
-                                                color = Color(0xFF9CA3AF),
-                                                fontSize = 11.5.sp,
-                                                fontWeight = FontWeight.Bold
-                                            )
-                                        }
-                                        TextButton(
-                                            onClick = {
-                                                val targetComp = components.find { it.id == selectedComponentId } ?: components.firstOrNull()
-                                                if (targetComp != null && targetComp.type != ComponentWidgetType.TEXT.name) {
-                                                    val curr = widgetStates[targetComp.id]
-                                                        ?: (targetComp.currentValue == "1" || targetComp.currentValue.equals("true", ignoreCase = true))
-                                                    val next = !curr
-                                                    widgetStates[targetComp.id] = next
-                                                    onTriggerComponent(targetComp.copy(currentValue = if (curr) "1" else "0"))
-                                                }
-                                            }
-                                        ) {
-                                            Text(
-                                                text = "OK",
-                                                color = Color(0xFF38BDF8),
-                                                fontSize = 11.5.sp,
-                                                fontWeight = FontWeight.Bold
-                                            )
-                                        }
-                                    }
+                                    Text(
+                                        text = "Tap Switch to Toggle ON/OFF",
+                                        color = Color(0xFF34D399),
+                                        fontSize = 10.sp,
+                                        fontWeight = FontWeight.Bold
+                                    )
                                 }
                             }
                         }
