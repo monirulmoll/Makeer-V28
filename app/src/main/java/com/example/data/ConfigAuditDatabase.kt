@@ -22,7 +22,19 @@ enum class ComponentWidgetType(val displayName: String) {
     TEXT("Text Label"),
     INPUT("Text Input"),
     IMAGE("Image Box"),
-    LINK("Link Opener")
+    LINK("Link Opener"),
+    S1_START("Start"),
+    S1_STOP("Stop"),
+    S1_TEXT("TextView"),
+    S1_LINK("Link Open"),
+    S1_IMAGE("ImageView");
+
+    val isScreen1Widget: Boolean
+        get() = name.startsWith("S1_")
+}
+
+fun isScreen1WidgetType(type: String?): Boolean {
+    return type != null && type.trim().uppercase().startsWith("S1_")
 }
 
 @Entity(tableName = "studio_projects")

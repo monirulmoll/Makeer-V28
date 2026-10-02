@@ -86,6 +86,7 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.example.data.CanvasComponentEntity
 import com.example.data.StudioProjectEntity
+import com.example.data.isScreen1WidgetType
 import com.example.engine.LocalConfigStateWriter
 import com.example.engine.ShizukuPrivilegeBridge
 import com.example.service.DynamicOverlayRegistry
@@ -501,7 +502,217 @@ fun CompiledStandaloneAppScreen(
                     }
                 }
 
-                // START / STOP & TARGET PATH FILE-CHANGE TEST
+                // SCREEN 1 CUSTOM MAIN SCREEN WIDGETS + START / STOP
+                val screen1Widgets = remember(initialComponents) {
+                    initialComponents.filter { isScreen1WidgetType(it.type) }
+                }
+                val hasCustomStartOrStop = remember(screen1Widgets) {
+                    screen1Widgets.any {
+                        it.type.equals("S1_START", ignoreCase = true) ||
+                            it.type.equals("S1_STOP", ignoreCase = true)
+                    }
+                }
+
+                if (screen1Widgets.isNotEmpty()) {
+                    Card(
+                        shape = RoundedCornerShape(18.dp),
+                        colors = CardDefaults.cardColors(containerColor = Color(0xFF111A2E)),
+                        border = BorderStroke(1.5.dp, Color(0xFF283B66)),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("standalone_screen1_custom_layout_card")
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 12.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .size(width = 276.dp, height = 450.dp)
+                                    .clip(RoundedCornerShape(16.dp))
+                            ) {
+                                screen1Widgets.forEach { comp ->
+                                    val typeUpper = comp.type.trim().uppercase()
+                                    val isTextOrLink = typeUpper == "S1_TEXT" || typeUpper == "S1_LINK"
+                                    val isImageWidget = typeUpper == "S1_IMAGE"
+
+                                    val widgetBgColor = when {
+                                        isTextOrLink || isImageWidget -> Color.Transparent
+                                        else -> parseHexColorSafe(comp.bgColorHex, Color(0xFF10B981))
+                                    }
+                                    val widgetTextColor = if (isTextOrLink) {
+                                        val parsed = parseHexColorSafe(comp.textColorHex, Color.White)
+                                        if (parsed.alpha == 0f) Color.White else parsed
+                                    } else {
+                                        parseHexColorSafe(comp.textColorHex, Color.White)
+                                    }
+
+                                    val bgBitmap = remember(comp.bgImagePath) {
+                                        if (comp.bgImagePath.isNotBlank()) {
+                                            val f = File(comp.bgImagePath)
+                                            if (f.exists()) BitmapFactory.decodeFile(f.absolutePath)?.asImageBitmap() else null
+                                        } else null
+                                    }
+                                    val customBitmap = remember(comp.customImagePath, comp.bgImagePath) {
+                                        val path = comp.customImagePath.ifBlank { comp.bgImagePath }
+                                        if (path.isNotBlank()) {
+                                            val f = File(path)
+                                            if (f.exists()) BitmapFactory.decodeFile(f.absolutePath)?.asImageBitmap() else null
+                                        } else null
+                                    }
+
+                                    Box(
+                                        modifier = Modifier
+                                            .offset(x = comp.posXDp.dp, y = comp.posYDp.dp)
+                                            .size(
+                                                width = comp.widthDp.coerceIn(50, 270).dp,
+                                                height = comp.heightDp.coerceIn(28, 260).dp
+                                            )
+                                            .clip(RoundedCornerShape(10.dp))
+                                            .background(widgetBgColor)
+                                            .clickable(enabled = typeUpper == "S1_START" || typeUpper == "S1_STOP" || typeUpper == "S1_LINK") {
+                                                when (typeUpper) {
+                                                    "S1_START" -> {
+                                                        if (!hasStoragePermission && !ShizukuPrivilegeBridge.isShizukuReady()) {
+                                                            requestStorageAction()
+                                                        } else if (!hasOverlayPermission) {
+                                                            requestFloatPermissionAction()
+                                                        } else {
+                                                            onStartOverlay()
+                                                        }
+                                                    }
+                                                    "S1_STOP" -> {
+                                                        onStopOverlay()
+                                                    }
+                                                    "S1_LINK" -> {
+                                                        val rawUrl = comp.linkUrl.trim()
+                                                        if (rawUrl.isNotEmpty()) {
+                                                            val formattedUrl = if (rawUrl.startsWith("http://", ignoreCase = true) ||
+                                                                rawUrl.startsWith("https://", ignoreCase = true)
+                                                            ) {
+                                                                rawUrl
+                                                            } else {
+                                                                "https://$rawUrl"
+                                                            }
+                                                            try {
+                                                                val intent = android.content.Intent(
+                                                                    android.content.Intent.ACTION_VIEW,
+                                                                    android.net.Uri.parse(formattedUrl)
+                                                                ).apply {
+                                                                    addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
+                                                                }
+                                                                context.startActivity(intent)
+                                                            } catch (_: Exception) {
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                            .testTag("standalone_s1_widget_${comp.id}")
+                                    ) {
+                                        when (typeUpper) {
+                                            "S1_START", "S1_STOP" -> {
+                                                if (bgBitmap != null) {
+                                                    Image(
+                                                        bitmap = bgBitmap,
+                                                        contentDescription = comp.label,
+                                                        contentScale = ContentScale.Crop,
+                                                        modifier = Modifier
+                                                            .fillMaxSize()
+                                                            .clip(RoundedCornerShape(10.dp))
+                                                    )
+                                                }
+                                                Box(
+                                                    modifier = Modifier
+                                                        .fillMaxSize()
+                                                        .padding(horizontal = 10.dp),
+                                                    contentAlignment = Alignment.Center
+                                                ) {
+                                                    Text(
+                                                        text = comp.label,
+                                                        color = widgetTextColor,
+                                                        fontSize = 14.sp,
+                                                        fontWeight = FontWeight.ExtraBold,
+                                                        maxLines = 1,
+                                                        overflow = TextOverflow.Ellipsis,
+                                                        textAlign = TextAlign.Center
+                                                    )
+                                                }
+                                            }
+
+                                            "S1_TEXT" -> {
+                                                Box(
+                                                    modifier = Modifier
+                                                        .fillMaxSize()
+                                                        .padding(horizontal = 8.dp),
+                                                    contentAlignment = Alignment.Center
+                                                ) {
+                                                    Text(
+                                                        text = comp.label,
+                                                        color = widgetTextColor,
+                                                        fontSize = 14.sp,
+                                                        fontWeight = FontWeight.Bold,
+                                                        maxLines = 2,
+                                                        overflow = TextOverflow.Ellipsis,
+                                                        textAlign = TextAlign.Center
+                                                    )
+                                                }
+                                            }
+
+                                            "S1_LINK" -> {
+                                                Row(
+                                                    modifier = Modifier
+                                                        .fillMaxSize()
+                                                        .padding(horizontal = 10.dp),
+                                                    verticalAlignment = Alignment.CenterVertically,
+                                                    horizontalArrangement = Arrangement.Center
+                                                ) {
+                                                    if (customBitmap != null) {
+                                                        Image(
+                                                            bitmap = customBitmap,
+                                                            contentDescription = "Link Side Logo",
+                                                            contentScale = ContentScale.Crop,
+                                                            modifier = Modifier
+                                                                .size(24.dp)
+                                                                .clip(RoundedCornerShape(6.dp))
+                                                        )
+                                                        Spacer(Modifier.width(8.dp))
+                                                    }
+                                                    Text(
+                                                        text = comp.label,
+                                                        color = widgetTextColor,
+                                                        fontSize = 13.sp,
+                                                        fontWeight = FontWeight.Bold,
+                                                        maxLines = 1,
+                                                        overflow = TextOverflow.Ellipsis
+                                                    )
+                                                }
+                                            }
+
+                                            "S1_IMAGE" -> {
+                                                if (customBitmap != null) {
+                                                    Image(
+                                                        bitmap = customBitmap,
+                                                        contentDescription = comp.label,
+                                                        contentScale = ContentScale.Crop,
+                                                        modifier = Modifier
+                                                            .fillMaxSize()
+                                                            .clip(RoundedCornerShape(10.dp))
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Default START / STOP fallback card (shown if user didn't add custom S1_START / S1_STOP buttons)
+                if (!hasCustomStartOrStop) {
                 Card(
                     shape = RoundedCornerShape(18.dp),
                     colors = CardDefaults.cardColors(containerColor = Color(0xFF151F34)),
@@ -607,6 +818,7 @@ fun CompiledStandaloneAppScreen(
                             )
                         }
                     }
+                }
                 }
             }
         }
@@ -1034,9 +1246,41 @@ fun CompiledStandaloneAppScreen(
         canvasBgImagePath = DynamicOverlayRegistry.getActiveCanvasBgImagePath(),
         autoFixSize = DynamicOverlayRegistry.isActiveAutoFixSize()
     )
+    val registryItems = remember {
+        DynamicOverlayRegistry.getActiveItems().mapIndexed { index, spec ->
+            CanvasComponentEntity(
+                id = (index + 1).toLong(),
+                projectId = 1L,
+                type = spec.type,
+                label = spec.label,
+                customImagePath = spec.bgImagePath ?: "",
+                bgImagePath = spec.bgImagePath ?: "",
+                posXDp = spec.posXDp,
+                posYDp = spec.posYDp,
+                widthDp = spec.widthDp,
+                heightDp = spec.heightDp,
+                byteOffsetHex = spec.byteOffsetHex,
+                onPayloadHex = spec.onPayloadHex,
+                offPayloadHex = spec.offPayloadHex,
+                sliderMax = spec.sliderMax,
+                bgColorHex = spec.bgColorHex,
+                textColorHex = spec.textColorHex,
+                currentValue = spec.currentValue,
+                targetFilePath = spec.targetFilePath ?: "",
+                linkUrl = spec.linkUrl ?: "",
+                soundTrigger = spec.soundTrigger ?: "NONE",
+                customSoundPath = spec.customSoundPath ?: "",
+                offSoundTrigger = spec.offSoundTrigger ?: "NONE",
+                offCustomSoundPath = spec.offCustomSoundPath ?: "",
+                borderColorHex = spec.borderColorHex ?: "#38BDF8",
+                borderStrokePercent = spec.borderStrokePercent,
+                borderAnimation = spec.borderAnimation ?: "NONE"
+            )
+        }
+    }
     CompiledStandaloneAppScreen(
         project = project,
-        initialComponents = emptyList(),
+        initialComponents = registryItems,
         compiledPackageName = pkg,
         isStandaloneInstalledApk = true,
         isOverlayRunning = isOverlayRunning,

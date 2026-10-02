@@ -30,11 +30,14 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.ime
 import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -91,6 +94,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -103,6 +107,7 @@ import java.util.Locale
 import kotlin.math.roundToInt
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.data.CanvasComponentEntity
+import com.example.data.isScreen1WidgetType
 import com.example.engine.LocalConfigStateWriter
 import com.example.engine.ShizukuPrivilegeBridge
 import com.example.ui.CompiledStandaloneAppScreen
@@ -266,8 +271,15 @@ class MainActivity : ComponentActivity() {
                             }
                         }
 
-                        val trackerSummary = remember(components) {
-                            viewModel.computeComponentTrackerSummary(components)
+                        val activeScreenComponents = remember(components, uiState.activePreviewScreen) {
+                            if (uiState.activePreviewScreen == 1) {
+                                components.filter { isScreen1WidgetType(it.type) }
+                            } else {
+                                components.filter { !isScreen1WidgetType(it.type) }
+                            }
+                        }
+                        val trackerSummary = remember(activeScreenComponents) {
+                            viewModel.computeComponentTrackerSummary(activeScreenComponents)
                         }
 
                         StudioCanvasBuilderScreen(
@@ -275,6 +287,7 @@ class MainActivity : ComponentActivity() {
                             components = components,
                             trackerSummary = trackerSummary,
                             onBackToLauncher = viewModel::navigateBackToLauncher,
+                            onSelectPreviewScreen = viewModel::selectPreviewScreen,
                             onAddPaletteEntry = { entry ->
                                 viewModel.addPaletteItemToCanvas(
                                     widgetType = entry.widgetType,
@@ -341,6 +354,7 @@ fun StudioCanvasBuilderScreen(
     components: List<CanvasComponentEntity>,
     trackerSummary: ComponentCountSummary,
     onBackToLauncher: () -> Unit,
+    onSelectPreviewScreen: (Int) -> Unit = {},
     onAddPaletteEntry: (SketchwarePaletteEntry) -> Unit,
     onSelectComponent: (Long?) -> Unit,
     onUpdateComponent: (CanvasComponentEntity) -> Unit,
@@ -1791,9 +1805,17 @@ fun StudioCanvasBuilderScreen(
                     }
                 }
 
+                val activeScreenComponents = remember(components, uiState.activePreviewScreen) {
+                    if (uiState.activePreviewScreen == 1) {
+                        components.filter { isScreen1WidgetType(it.type) }
+                    } else {
+                        components.filter { !isScreen1WidgetType(it.type) }
+                    }
+                }
+
                 ComponentTrackerBanner(
                     summary = trackerSummary,
-                    components = components,
+                    components = activeScreenComponents,
                     selectedComponentId = uiState.selectedComponentId,
                     onSelectComponentForEdit = onSelectComponent,
                     onOpenEditFloatingPanel = onOpenEditFloatingPanel
@@ -1801,28 +1823,135 @@ fun StudioCanvasBuilderScreen(
             }
         },
         bottomBar = {
-            AnimatedVisibility(
-                visible = selectedComponent != null,
-                enter = slideInVertically(initialOffsetY = { it }),
-                exit = slideOutVertically(targetOffsetY = { it })
-            ) {
-                if (selectedComponent != null) {
-                    PropertyInspectorBottomDock(
-                        component = selectedComponent,
-                        hasStoragePermission = uiState.hasStoragePermission,
-                        isAutoFixSize = project.autoFixSize,
-                        onToggleAutoFixSize = onToggleAutoFixSize,
-                        onOpenEditCode = onOpenEditCode,
-                        onOpenEditFloatingPanel = onOpenEditFloatingPanel,
-                        onUpdateComponent = onUpdateComponent,
-                        onSaveDesign = { edited -> onSaveProjectDesign(edited) },
-                        onPickImageUri = { uri -> onPickImageForComponent(selectedComponent, uri) },
-                        onPickSoundUri = { uri, isOff -> onPickSoundForComponent(selectedComponent, uri, isOff) },
-                        onDuplicateComponent = { onDuplicateComponent(selectedComponent) },
-                        onDeleteComponent = { onDeleteComponent(selectedComponent.id) },
-                        onTestTriggerWrite = { editedComp -> onTriggerComponentLive(editedComp, null) },
-                        onCloseDock = { onSelectComponent(null) }
-                    )
+            val density = LocalDensity.current
+            val isKeyboardVisible = WindowInsets.ime.getBottom(density) > 0
+            val isEditingAnyDialog = uiState.showEditFloatingPanelDialog ||
+                uiState.showChangeBackgroundDialog ||
+                uiState.showEditCodeDialog
+
+            Column(modifier = Modifier.fillMaxWidth()) {
+                AnimatedVisibility(
+                    visible = selectedComponent != null,
+                    enter = slideInVertically(initialOffsetY = { it }),
+                    exit = slideOutVertically(targetOffsetY = { it })
+                ) {
+                    if (selectedComponent != null) {
+                        PropertyInspectorBottomDock(
+                            component = selectedComponent,
+                            hasStoragePermission = uiState.hasStoragePermission,
+                            isAutoFixSize = project.autoFixSize,
+                            onToggleAutoFixSize = onToggleAutoFixSize,
+                            onOpenEditCode = onOpenEditCode,
+                            onOpenEditFloatingPanel = onOpenEditFloatingPanel,
+                            onUpdateComponent = onUpdateComponent,
+                            onSaveDesign = { edited -> onSaveProjectDesign(edited) },
+                            onPickImageUri = { uri -> onPickImageForComponent(selectedComponent, uri) },
+                            onPickSoundUri = { uri, isOff -> onPickSoundForComponent(selectedComponent, uri, isOff) },
+                            onDuplicateComponent = { onDuplicateComponent(selectedComponent) },
+                            onDeleteComponent = { onDeleteComponent(selectedComponent.id) },
+                            onTestTriggerWrite = { editedComp -> onTriggerComponentLive(editedComp, null) },
+                            onCloseDock = { onSelectComponent(null) }
+                        )
+                    }
+                }
+
+                // Bottom Select Preview Screen bar (Screen 1 vs Screen 2)
+                // Hidden automatically when typing on keyboard OR when editing a widget's function/properties
+                AnimatedVisibility(
+                    visible = selectedComponent == null && !isKeyboardVisible && !isEditingAnyDialog,
+                    enter = slideInVertically(initialOffsetY = { it }),
+                    exit = slideOutVertically(targetOffsetY = { it })
+                ) {
+                    Surface(
+                        color = Color(0xFF0A1224),
+                        border = BorderStroke(1.dp, Color(0xFF1E293B)),
+                        tonalElevation = 8.dp,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .navigationBarsPadding()
+                            .testTag("select_preview_screen_bottom_bar")
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 10.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            val isScreen1 = uiState.activePreviewScreen == 1
+                            val isScreen2 = uiState.activePreviewScreen == 2
+
+                            // Preview 1 (Main Screen) Button
+                            Surface(
+                                shape = RoundedCornerShape(12.dp),
+                                color = if (isScreen1) Color(0xFF4F46E5) else Color(0xFF151F36),
+                                border = BorderStroke(
+                                    width = if (isScreen1) 1.5.dp else 1.dp,
+                                    color = if (isScreen1) Color(0xFF818CF8) else Color(0xFF283556)
+                                ),
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .clickable { onSelectPreviewScreen(1) }
+                                    .testTag("select_preview_screen_1_button")
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 9.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.Center
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(8.dp)
+                                            .clip(CircleShape)
+                                            .background(if (isScreen1) Color(0xFF38BDF8) else Color(0xFF64748B))
+                                    )
+                                    Spacer(Modifier.width(6.dp))
+                                    Text(
+                                        text = "Preview 1 (Main Screen)",
+                                        color = Color.White,
+                                        fontSize = 11.sp,
+                                        fontWeight = if (isScreen1) FontWeight.ExtraBold else FontWeight.SemiBold,
+                                        maxLines = 1
+                                    )
+                                }
+                            }
+
+                            // Preview 2 (Floating Window) Button
+                            Surface(
+                                shape = RoundedCornerShape(12.dp),
+                                color = if (isScreen2) Color(0xFF4F46E5) else Color(0xFF151F36),
+                                border = BorderStroke(
+                                    width = if (isScreen2) 1.5.dp else 1.dp,
+                                    color = if (isScreen2) Color(0xFF818CF8) else Color(0xFF283556)
+                                ),
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .clickable { onSelectPreviewScreen(2) }
+                                    .testTag("select_preview_screen_2_button")
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 9.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.Center
+                                ) {
+                                    Box(
+                                        modifier = Modifier
+                                            .size(8.dp)
+                                            .clip(CircleShape)
+                                            .background(if (isScreen2) Color(0xFF38BDF8) else Color(0xFF64748B))
+                                    )
+                                    Spacer(Modifier.width(6.dp))
+                                    Text(
+                                        text = "Preview 2 (Floating Window)",
+                                        color = Color.White,
+                                        fontSize = 11.sp,
+                                        fontWeight = if (isScreen2) FontWeight.ExtraBold else FontWeight.SemiBold,
+                                        maxLines = 1
+                                    )
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -1839,6 +1968,7 @@ fun StudioCanvasBuilderScreen(
                 selectedComponentId = uiState.selectedComponentId,
                 isLivePreviewMode = uiState.isLivePreviewMode,
                 statusToast = uiState.statusToast,
+                activePreviewScreen = uiState.activePreviewScreen,
                 onAddPaletteEntry = onAddPaletteEntry,
                 onSelectComponent = onSelectComponent,
                 onMoveComponent = onMoveComponent,

@@ -9,6 +9,7 @@ import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -17,6 +18,7 @@ import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -44,9 +46,11 @@ import androidx.compose.material.icons.filled.Input
 import androidx.compose.material.icons.filled.LinearScale
 import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.Palette
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.SmartButton
+import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.SwapHoriz
 import androidx.compose.material.icons.filled.SwapVert
 import androidx.compose.material.icons.filled.TextFields
@@ -77,8 +81,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.toArgb
@@ -98,8 +104,27 @@ import com.example.data.CanvasComponentEntity
 import com.example.data.ComponentWidgetType
 import com.example.data.ConfigWriteAuditEntity
 import com.example.data.StudioProjectEntity
+import com.example.data.isScreen1WidgetType
 import java.io.File
+import kotlin.math.abs
 import kotlin.math.roundToInt
+
+data class Screen1DhancheSlot(
+    val widgetType: String,
+    val title: String,
+    val recX: Int,
+    val recY: Int,
+    val recW: Int,
+    val recH: Int
+)
+
+val Screen1RecommendedDhancheSlots = listOf(
+    Screen1DhancheSlot("S1_IMAGE", "Image View Frame", 23, 18, 230, 96),
+    Screen1DhancheSlot("S1_TEXT", "TextView Frame", 23, 126, 230, 40),
+    Screen1DhancheSlot("S1_START", "Start Button Frame", 23, 180, 230, 48),
+    Screen1DhancheSlot("S1_STOP", "Stop Button Frame", 23, 240, 230, 48),
+    Screen1DhancheSlot("S1_LINK", "Link Open Frame", 23, 304, 230, 44)
+)
 
 data class SketchwarePaletteEntry(
     val title: String,
@@ -194,6 +219,7 @@ fun SketchwareStudioSplitWorkspace(
     selectedComponentId: Long?,
     isLivePreviewMode: Boolean,
     statusToast: String,
+    activePreviewScreen: Int = 2,
     onAddPaletteEntry: (SketchwarePaletteEntry) -> Unit,
     onSelectComponent: (Long?) -> Unit,
     onMoveComponent: (CanvasComponentEntity, Int, Int) -> Unit,
@@ -207,50 +233,82 @@ fun SketchwareStudioSplitWorkspace(
     onClearCanvas: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val screen1Components = remember(components) {
+        components.filter { isScreen1WidgetType(it.type) }
+    }
+    val screen2Components = remember(components) {
+        components.filter { !isScreen1WidgetType(it.type) }
+    }
+
     Row(modifier = modifier.fillMaxSize()) {
-        // LEFT SIDE WIDGET PALETTE (Updated Dark Studio Dock)
+        // LEFT SIDE WIDGET PALETTE (Switches between Screen 1 and Screen 2 widgets)
         LeftSideWidgetPalette(
+            activePreviewScreen = activePreviewScreen,
             isAutoFixSize = project.autoFixSize,
             onSelectPaletteEntry = onAddPaletteEntry,
             onToggleAutoFixSize = onToggleAutoFixSize
         )
 
-        // RIGHT SIDE INTERACTIVE PHONE FRAME + FLOATING PANEL CANVAS
-        InteractiveOverlayCanvas(
-            project = project,
-            components = components,
-            selectedComponentId = selectedComponentId,
-            onSelectComponent = onSelectComponent,
-            onMoveComponent = { id, newX, newY ->
-                components.find { it.id == id }?.let { comp ->
-                    onMoveComponent(comp, newX, newY)
-                }
-            },
-            onResizeComponent = { id, newW, newH ->
-                components.find { it.id == id }?.let { comp ->
-                    onResizeComponent(comp, newW, newH)
-                }
-            },
-            onResizeCanvas = onResizeCanvas,
-            onOpenEditFloatingPanel = onOpenEditFloatingPanel,
-            onOpenChangeBackground = onOpenChangeBackground,
-            onTriggerComponent = { comp, nextVal ->
-                onTriggerComponentLive(comp, nextVal)
-            },
-            modifier = Modifier
-                .weight(1f)
-                .fillMaxHeight()
-        )
+        if (activePreviewScreen == 1) {
+            // PREVIEW 1: MAIN SCREEN EDITOR (Start/Stop, TextView, Link Open, ImageView + Fix Dhanche + Corner Resize)
+            InteractiveMainScreen1Canvas(
+                project = project,
+                components = screen1Components,
+                selectedComponentId = selectedComponentId,
+                onSelectComponent = onSelectComponent,
+                onMoveComponent = { id, newX, newY ->
+                    screen1Components.find { it.id == id }?.let { comp ->
+                        onMoveComponent(comp, newX, newY)
+                    }
+                },
+                onResizeComponent = { id, newW, newH ->
+                    screen1Components.find { it.id == id }?.let { comp ->
+                        onResizeComponent(comp, newW, newH)
+                    }
+                },
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxHeight()
+            )
+        } else {
+            // PREVIEW 2: FLOATING WINDOW EDITOR (Unchanged)
+            InteractiveOverlayCanvas(
+                project = project,
+                components = screen2Components,
+                selectedComponentId = selectedComponentId,
+                onSelectComponent = onSelectComponent,
+                onMoveComponent = { id, newX, newY ->
+                    screen2Components.find { it.id == id }?.let { comp ->
+                        onMoveComponent(comp, newX, newY)
+                    }
+                },
+                onResizeComponent = { id, newW, newH ->
+                    screen2Components.find { it.id == id }?.let { comp ->
+                        onResizeComponent(comp, newW, newH)
+                    }
+                },
+                onResizeCanvas = onResizeCanvas,
+                onOpenEditFloatingPanel = onOpenEditFloatingPanel,
+                onOpenChangeBackground = onOpenChangeBackground,
+                onTriggerComponent = { comp, nextVal ->
+                    onTriggerComponentLive(comp, nextVal)
+                },
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxHeight()
+            )
+        }
     }
 }
 
 @Composable
 private fun LeftSideWidgetPalette(
+    activePreviewScreen: Int = 2,
     isAutoFixSize: Boolean,
     onSelectPaletteEntry: (SketchwarePaletteEntry) -> Unit,
     onToggleAutoFixSize: () -> Unit
 ) {
-    val widgetItems = remember {
+    val screen2WidgetItems = remember {
         listOf(
             LeftPaletteItemSpec(
                 entry = SketchwarePaletteEntry("Switch", ComponentWidgetType.TOGGLE, 196, 42),
@@ -291,6 +349,43 @@ private fun LeftSideWidgetPalette(
         )
     }
 
+    val screen1WidgetItems = remember {
+        listOf(
+            LeftPaletteItemSpec(
+                entry = SketchwarePaletteEntry("Floating Panel Start", ComponentWidgetType.S1_START, 210, 46, "#10B981", "#FFFFFF"),
+                icon = Icons.Default.PlayArrow,
+                iconTint = Color(0xFF10B981),
+                tagSlug = "s1_start"
+            ),
+            LeftPaletteItemSpec(
+                entry = SketchwarePaletteEntry("Floating Panel Stop", ComponentWidgetType.S1_STOP, 210, 46, "#EF4444", "#FFFFFF"),
+                icon = Icons.Default.Stop,
+                iconTint = Color(0xFFEF4444),
+                tagSlug = "s1_stop"
+            ),
+            LeftPaletteItemSpec(
+                entry = SketchwarePaletteEntry("Text View", ComponentWidgetType.S1_TEXT, 220, 52, "#00000000", "#FFFFFF"),
+                icon = Icons.Default.TextFields,
+                iconTint = Color(0xFF6366F1),
+                tagSlug = "s1_text"
+            ),
+            LeftPaletteItemSpec(
+                entry = SketchwarePaletteEntry("Link Open", ComponentWidgetType.S1_LINK, 220, 52, "#00000000", "#38BDF8"),
+                icon = Icons.Default.Link,
+                iconTint = Color(0xFF2563EB),
+                tagSlug = "s1_link"
+            ),
+            LeftPaletteItemSpec(
+                entry = SketchwarePaletteEntry("Image View", ComponentWidgetType.S1_IMAGE, 118, 98, "#00000000", "#FFFFFF"),
+                icon = Icons.Default.Image,
+                iconTint = Color(0xFFF59E0B),
+                tagSlug = "s1_image"
+            )
+        )
+    }
+
+    val activeItems = if (activePreviewScreen == 1) screen1WidgetItems else screen2WidgetItems
+
     Surface(
         color = Color(0xFF0E1526),
         border = BorderStroke(1.dp, Color(0xFF1E293B)),
@@ -300,7 +395,6 @@ private fun LeftSideWidgetPalette(
             .testTag("left_widget_palette_sidebar")
     ) {
         Column(modifier = Modifier.fillMaxSize()) {
-            // Scrollable Categorized Widget List on Left Side (Only the 6 core widgets)
             Column(
                 modifier = Modifier
                     .weight(1f)
@@ -309,8 +403,12 @@ private fun LeftSideWidgetPalette(
                     .padding(horizontal = 6.dp, vertical = 6.dp),
                 verticalArrangement = Arrangement.spacedBy(5.dp)
             ) {
-                PaletteCategoryHeader("Widgets (6)", Color(0xFFFB923C))
-                widgetItems.forEach { item ->
+                if (activePreviewScreen == 1) {
+                    PaletteCategoryHeader("Widgets", Color(0xFF38BDF8))
+                } else {
+                    PaletteCategoryHeader("Widgets (6)", Color(0xFFFB923C))
+                }
+                activeItems.forEach { item ->
                     LeftPaletteItemRow(
                         item = item,
                         onClick = { onSelectPaletteEntry(item.entry) }
@@ -318,39 +416,60 @@ private fun LeftSideWidgetPalette(
                 }
             }
 
-            // Bottom pinned Auto Size button
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .background(Color(0xFF090D18))
-                    .border(BorderStroke(0.5.dp, Color(0xFF1E293B)))
-                    .padding(6.dp)
-            ) {
-                Button(
-                    onClick = onToggleAutoFixSize,
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = if (isAutoFixSize) Color(0xFF10B981) else Color(0xFF283556)
-                    ),
-                    shape = RoundedCornerShape(10.dp),
-                    contentPadding = PaddingValues(horizontal = 6.dp, vertical = 6.dp),
+            if (activePreviewScreen == 2) {
+                // Bottom pinned Auto Size button for Screen 2
+                Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(38.dp)
-                        .testTag("left_palette_auto_size_button")
+                        .background(Color(0xFF090D18))
+                        .border(BorderStroke(0.5.dp, Color(0xFF1E293B)))
+                        .padding(6.dp)
                 ) {
-                    Icon(
-                        imageVector = Icons.Default.CheckBox,
-                        contentDescription = "Auto Size",
-                        tint = Color.White,
-                        modifier = Modifier.size(14.dp)
-                    )
-                    Spacer(Modifier.width(4.dp))
+                    Button(
+                        onClick = onToggleAutoFixSize,
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = if (isAutoFixSize) Color(0xFF10B981) else Color(0xFF283556)
+                        ),
+                        shape = RoundedCornerShape(10.dp),
+                        contentPadding = PaddingValues(horizontal = 6.dp, vertical = 6.dp),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(38.dp)
+                            .testTag("left_palette_auto_size_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.CheckBox,
+                            contentDescription = "Auto Size",
+                            tint = Color.White,
+                            modifier = Modifier.size(14.dp)
+                        )
+                        Spacer(Modifier.width(4.dp))
+                        Text(
+                            text = if (isAutoFixSize) "Auto Size: ON" else "Auto Size: OFF",
+                            color = Color.White,
+                            fontSize = 10.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            maxLines = 1
+                        )
+                    }
+                }
+            } else {
+                // Screen 1 info badge: Dynamic Full-Screen Dhancha
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(Color(0xFF090D18))
+                        .border(BorderStroke(0.5.dp, Color(0xFF1E293B)))
+                        .padding(8.dp),
+                    contentAlignment = Alignment.Center
+                ) {
                     Text(
-                        text = if (isAutoFixSize) "Auto Size: ON" else "Auto Size: OFF",
-                        color = Color.White,
-                        fontSize = 10.sp,
-                        fontWeight = FontWeight.ExtraBold,
-                        maxLines = 1
+                        text = "Dynamic Dhancha\n& Snap Guides ON",
+                        color = Color(0xFF38BDF8),
+                        fontSize = 9.5.sp,
+                        fontWeight = FontWeight.Bold,
+                        textAlign = TextAlign.Center,
+                        lineHeight = 12.sp
                     )
                 }
             }
@@ -722,6 +841,795 @@ fun WidgetPaletteStrip(
                     color = Color.White,
                     fontSize = 12.sp
                 )
+            }
+        }
+    }
+}
+
+@Composable
+fun InteractiveMainScreen1Canvas(
+    project: StudioProjectEntity,
+    components: List<CanvasComponentEntity>,
+    selectedComponentId: Long?,
+    onSelectComponent: (Long?) -> Unit,
+    onMoveComponent: (Long, Int, Int) -> Unit,
+    onResizeComponent: (Long, Int, Int) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val density = LocalDensity.current
+    val selectedComp = remember(components, selectedComponentId) {
+        components.find { it.id == selectedComponentId }
+    }
+
+    Box(
+        modifier = modifier
+            .fillMaxSize()
+            .background(Color(0xFF060A14))
+            .clickable { onSelectComponent(null) }
+            .padding(6.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        // Outer Phone Device Frame — Full-Screen Preview with Dynamic Layout (Dhancha)
+        Card(
+            shape = RoundedCornerShape(26.dp),
+            colors = CardDefaults.cardColors(containerColor = Color(0xFF090F20)),
+            border = BorderStroke(2.dp, Color(0xFF1E325C)),
+            elevation = CardDefaults.cardElevation(defaultElevation = 12.dp),
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 2.dp, vertical = 2.dp)
+        ) {
+            Column(modifier = Modifier.fillMaxSize()) {
+                // 1. Phone Status Bar ("9:41" ... status icons)
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(Color(0xFF070C1A))
+                        .padding(horizontal = 14.dp, vertical = 6.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "9:41",
+                        color = Color.White,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(5.dp)
+                    ) {
+                        Text(
+                            text = "▂▄▆",
+                            color = Color.White,
+                            fontSize = 9.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            text = "WiFi",
+                            color = Color(0xFF94A3B8),
+                            fontSize = 8.5.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Surface(
+                            shape = RoundedCornerShape(3.dp),
+                            color = Color.White,
+                            modifier = Modifier.size(width = 14.dp, height = 7.dp)
+                        ) {}
+                    }
+                }
+
+                // 2. Screen Editor Sub-Header inside Phone Screen
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(Color(0xFF0A1124))
+                        .padding(horizontal = 12.dp, vertical = 6.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Text(
+                            text = "←",
+                            color = Color(0xFFCBD5E1),
+                            fontSize = 13.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            text = "Screen Editor",
+                            color = Color.White,
+                            fontSize = 11.5.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Surface(
+                            shape = RoundedCornerShape(6.dp),
+                            color = Color(0xFF15203B),
+                            border = BorderStroke(1.dp, Color(0xFF283B66))
+                        ) {
+                            Text(
+                                text = "◉ Preview 1",
+                                color = Color(0xFF38BDF8),
+                                fontSize = 8.5.sp,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp)
+                            )
+                        }
+                    }
+                }
+
+                // 3. Full-Screen Dynamic Layout (Dhancha) Workspace (NO fixed-size boxes!)
+                BoxWithConstraints(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth()
+                        .background(
+                            Brush.verticalGradient(
+                                colors = listOf(
+                                    Color(0xFF0C1832),
+                                    Color(0xFF112244),
+                                    Color(0xFF0A1328)
+                                )
+                            )
+                        )
+                        .padding(horizontal = 10.dp, vertical = 8.dp)
+                        .testTag("screen1_main_canvas_window")
+                ) {
+                    val canvasWidthDp = maxWidth.value.coerceAtLeast(220f)
+                    val canvasHeightDp = maxHeight.value.coerceAtLeast(300f)
+
+                    // Full-screen Dynamic Grid + Outer Dhancha Frame + Dashed Alignment/Snap Guide Lines
+                    Canvas(modifier = Modifier.fillMaxSize()) {
+                        val w = size.width
+                        val h = size.height
+                        val gridStepPx = 22.dp.toPx()
+
+                        // Subtle full-screen blueprint grid lines
+                        var gx = gridStepPx
+                        while (gx < w) {
+                            drawLine(
+                                color = Color(0xFF38BDF8).copy(alpha = 0.07f),
+                                start = Offset(gx, 0f),
+                                end = Offset(gx, h),
+                                strokeWidth = 1f
+                            )
+                            gx += gridStepPx
+                        }
+                        var gy = gridStepPx
+                        while (gy < h) {
+                            drawLine(
+                                color = Color(0xFF38BDF8).copy(alpha = 0.07f),
+                                start = Offset(0f, gy),
+                                end = Offset(w, gy),
+                                strokeWidth = 1f
+                            )
+                            gy += gridStepPx
+                        }
+
+                        // Dashed Center Vertical & Horizontal Responsive Alignment Guides
+                        val dashEffect = PathEffect.dashPathEffect(floatArrayOf(10f, 8f), 0f)
+                        val centerX = w / 2f
+                        val centerY = h / 2f
+
+                        drawLine(
+                            color = Color(0xFF60A5FA).copy(alpha = 0.42f),
+                            start = Offset(centerX, 0f),
+                            end = Offset(centerX, h),
+                            strokeWidth = 1.4.dp.toPx(),
+                            pathEffect = dashEffect
+                        )
+                        drawLine(
+                            color = Color(0xFF60A5FA).copy(alpha = 0.25f),
+                            start = Offset(0f, centerY),
+                            end = Offset(w, centerY),
+                            strokeWidth = 1.dp.toPx(),
+                            pathEffect = dashEffect
+                        )
+
+                        // Dynamic Widget Snap Guide Lines for each placed widget
+                        components.forEach { item ->
+                            val itemTopPx = item.posYDp.dp.toPx().coerceIn(0f, h)
+                            val itemBottomPx = (item.posYDp + item.heightDp).dp.toPx().coerceIn(0f, h)
+                            val itemLeftPx = item.posXDp.dp.toPx().coerceIn(0f, w)
+                            val itemRightPx = (item.posXDp + item.widthDp).dp.toPx().coerceIn(0f, w)
+                            val isItemSelected = item.id == selectedComponentId
+                            val guideAlpha = if (isItemSelected) 0.55f else 0.22f
+                            val guideColor = if (isItemSelected) Color(0xFF38BDF8) else Color(0xFF6366F1)
+
+                            // Horizontal top/bottom alignment guides across the full screen
+                            drawLine(
+                                color = guideColor.copy(alpha = guideAlpha),
+                                start = Offset(0f, itemTopPx),
+                                end = Offset(w, itemTopPx),
+                                strokeWidth = 1.dp.toPx(),
+                                pathEffect = dashEffect
+                            )
+                            drawLine(
+                                color = guideColor.copy(alpha = guideAlpha),
+                                start = Offset(0f, itemBottomPx),
+                                end = Offset(w, itemBottomPx),
+                                strokeWidth = 1.dp.toPx(),
+                                pathEffect = dashEffect
+                            )
+
+                            // Vertical left/right alignment guides when selected
+                            if (isItemSelected) {
+                                drawLine(
+                                    color = Color(0xFF38BDF8).copy(alpha = 0.45f),
+                                    start = Offset(itemLeftPx, 0f),
+                                    end = Offset(itemLeftPx, h),
+                                    strokeWidth = 1.dp.toPx(),
+                                    pathEffect = dashEffect
+                                )
+                                drawLine(
+                                    color = Color(0xFF38BDF8).copy(alpha = 0.45f),
+                                    start = Offset(itemRightPx, 0f),
+                                    end = Offset(itemRightPx, h),
+                                    strokeWidth = 1.dp.toPx(),
+                                    pathEffect = dashEffect
+                                )
+                            }
+                        }
+
+                        // Full-Screen Outer Dynamic Dhancha Border Frame
+                        val frameColor = Color(0xFF6366F1)
+                        val strokePx = 1.8.dp.toPx()
+                        drawRect(
+                            color = frameColor.copy(alpha = 0.85f),
+                            topLeft = Offset(0f, 0f),
+                            size = size,
+                            style = androidx.compose.ui.graphics.drawscope.Stroke(width = strokePx)
+                        )
+
+                        // 8 Full-Screen Frame Anchor Squares (Corners + Midpoints, matching screenshot)
+                        val handleSize = 7.dp.toPx()
+                        val halfH = handleSize / 2f
+                        val frameAnchorPoints = listOf(
+                            Offset(0f, 0f),
+                            Offset(w / 2f, 0f),
+                            Offset(w, 0f),
+                            Offset(0f, h / 2f),
+                            Offset(w, h / 2f),
+                            Offset(0f, h),
+                            Offset(w / 2f, h),
+                            Offset(w, h)
+                        )
+                        frameAnchorPoints.forEach { pt ->
+                            drawRect(
+                                color = Color(0xFF818CF8),
+                                topLeft = Offset(
+                                    (pt.x - halfH).coerceIn(0f, w - handleSize),
+                                    (pt.y - halfH).coerceIn(0f, h - handleSize)
+                                ),
+                                size = androidx.compose.ui.geometry.Size(handleSize, handleSize)
+                            )
+                        }
+                    }
+
+                    // Empty state hint if no widgets placed yet (clean, no fixed boxes)
+                    if (components.isEmpty()) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .padding(24.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.Center
+                        ) {
+                            Surface(
+                                shape = RoundedCornerShape(14.dp),
+                                color = Color(0xFF0F172A).copy(alpha = 0.82f),
+                                border = BorderStroke(1.dp, Color(0xFF6366F1).copy(alpha = 0.6f))
+                            ) {
+                                Column(
+                                    modifier = Modifier.padding(16.dp),
+                                    horizontalAlignment = Alignment.CenterHorizontally,
+                                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    Text(
+                                        text = "Full-Screen Dynamic Layout (Dhancha)",
+                                        color = Color.White,
+                                        fontSize = 12.sp,
+                                        fontWeight = FontWeight.ExtraBold,
+                                        textAlign = TextAlign.Center
+                                    )
+                                    Text(
+                                        text = "Tap Floating Panel Start, Stop, Text View, Link Open, or Image View on the left to place on the responsive guide grid.",
+                                        color = Color(0xFF94A3B8),
+                                        fontSize = 10.sp,
+                                        textAlign = TextAlign.Center
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    // Render Placed Widgets on the Full-Screen Dynamic Dhancha
+                    components.forEach { comp ->
+                        val isSelected = comp.id == selectedComponentId
+                        val matchingSlot = remember(comp.type) {
+                            Screen1RecommendedDhancheSlots.find {
+                                it.widgetType.equals(comp.type, ignoreCase = true)
+                            }
+                        }
+
+                        var liveWidthDp by remember(comp.id, comp.widthDp) {
+                            mutableFloatStateOf(
+                                comp.widthDp.toFloat().coerceIn(60f, (canvasWidthDp - 12f).coerceAtLeast(120f))
+                            )
+                        }
+                        var liveHeightDp by remember(comp.id, comp.heightDp) {
+                            mutableFloatStateOf(
+                                comp.heightDp.toFloat().coerceIn(32f, (canvasHeightDp - 16f).coerceAtLeast(120f))
+                            )
+                        }
+
+                        var offsetX by remember(comp.id, comp.posXDp) {
+                            mutableFloatStateOf(with(density) { comp.posXDp.dp.toPx() })
+                        }
+                        var offsetY by remember(comp.id, comp.posYDp) {
+                            mutableFloatStateOf(with(density) { comp.posYDp.dp.toPx() })
+                        }
+
+                        val typeUpper = comp.type.trim().uppercase()
+                        val isStart = typeUpper == "S1_START"
+                        val isStop = typeUpper == "S1_STOP"
+                        val isText = typeUpper == "S1_TEXT"
+                        val isLink = typeUpper == "S1_LINK"
+                        val isImage = typeUpper == "S1_IMAGE"
+                        val isTextOrLink = isText || isLink
+
+                        // Accent border color per widget type matching the screenshot
+                        val accentBorderColor = when {
+                            isStart -> Color(0xFF10B981)
+                            isStop -> Color(0xFFEF4444)
+                            isText -> Color(0xFF818CF8)
+                            isLink -> Color(0xFF38BDF8)
+                            isImage -> Color(0xFF38BDF8)
+                            else -> Color(0xFF38BDF8)
+                        }
+
+                        // Background color: S1_TEXT and S1_LINK are always transparent for Screen 1
+                        val widgetBgColor = when {
+                            isTextOrLink -> Color(0xFF1E293B).copy(alpha = 0.32f)
+                            isImage -> Color(0xFF0F172A).copy(alpha = 0.45f)
+                            else -> {
+                                val parsed = parseHexColorSafe(comp.bgColorHex, if (isStart) Color(0xFF10B981) else Color(0xFFEF4444))
+                                if (parsed.alpha == 0f) Color.Transparent else parsed.copy(alpha = 0.24f)
+                            }
+                        }
+
+                        val widgetTextColor = if (isTextOrLink) {
+                            val parsed = parseHexColorSafe(comp.textColorHex, Color.White)
+                            if (parsed.alpha == 0f) Color.White else parsed
+                        } else {
+                            parseHexColorSafe(comp.textColorHex, Color.White)
+                        }
+
+                        val bgBitmap = remember(comp.bgImagePath) {
+                            if (comp.bgImagePath.isNotBlank()) {
+                                val f = File(comp.bgImagePath)
+                                if (f.exists()) BitmapFactory.decodeFile(f.absolutePath)?.asImageBitmap() else null
+                            } else null
+                        }
+
+                        val customBitmap = remember(comp.customImagePath, comp.bgImagePath) {
+                            val path = comp.customImagePath.ifBlank { comp.bgImagePath }
+                            if (path.isNotBlank()) {
+                                val f = File(path)
+                                if (f.exists()) BitmapFactory.decodeFile(f.absolutePath)?.asImageBitmap() else null
+                            } else null
+                        }
+
+                        val centeredXDp = ((canvasWidthDp - liveWidthDp) / 2f).roundToInt().coerceAtLeast(0)
+                        val currentXDp = with(density) { offsetX.toDp().value.roundToInt() }
+                        val isCenteredSnap = abs(currentXDp - centeredXDp) <= 6
+
+                        Box(
+                            modifier = Modifier
+                                .offset { IntOffset(offsetX.roundToInt(), offsetY.roundToInt()) }
+                                .size(liveWidthDp.dp, liveHeightDp.dp)
+                                .clip(RoundedCornerShape(14.dp))
+                                .background(widgetBgColor)
+                                .border(
+                                    BorderStroke(
+                                        width = if (isSelected) 2.dp else 1.4.dp,
+                                        color = if (isSelected) accentBorderColor else accentBorderColor.copy(alpha = 0.8f)
+                                    ),
+                                    RoundedCornerShape(14.dp)
+                                )
+                                .clickable {
+                                    onSelectComponent(comp.id)
+                                }
+                                .pointerInput(comp.id, canvasWidthDp, canvasHeightDp) {
+                                    detectDragGestures(
+                                        onDragStart = { onSelectComponent(comp.id) },
+                                        onDragEnd = {
+                                            val maxXDp = (canvasWidthDp - liveWidthDp).roundToInt().coerceAtLeast(0)
+                                            val maxYDp = (canvasHeightDp - liveHeightDp).roundToInt().coerceAtLeast(0)
+                                            var finalXDp = with(density) { offsetX.toDp().value.roundToInt() }.coerceIn(0, maxXDp)
+                                            var finalYDp = with(density) { offsetY.toDp().value.roundToInt() }.coerceIn(0, maxYDp)
+
+                                            // Smooth Snap-to-Center X guide ("thoda sa atke")
+                                            val targetCenterX = ((canvasWidthDp - liveWidthDp) / 2f).roundToInt().coerceAtLeast(0)
+                                            if (abs(finalXDp - targetCenterX) <= 16) {
+                                                finalXDp = targetCenterX
+                                            }
+
+                                            // Smooth Snap-to-Grid / Guide Y (22dp grid or recommended vertical rhythm)
+                                            val nearestGridY = ((finalYDp / 22f).roundToInt() * 22).coerceIn(0, maxYDp)
+                                            if (abs(finalYDp - nearestGridY) <= 8) {
+                                                finalYDp = nearestGridY
+                                            }
+                                            if (matchingSlot != null && abs(finalYDp - matchingSlot.recY) <= 14) {
+                                                finalYDp = matchingSlot.recY.coerceIn(0, maxYDp)
+                                            }
+
+                                            offsetX = with(density) { finalXDp.dp.toPx() }
+                                            offsetY = with(density) { finalYDp.dp.toPx() }
+                                            onMoveComponent(comp.id, finalXDp, finalYDp)
+                                        },
+                                        onDrag = { change, dragAmount ->
+                                            change.consume()
+                                            val maxXPx = with(density) { (canvasWidthDp - liveWidthDp).coerceAtLeast(0f).dp.toPx() }
+                                            val maxYPx = with(density) { (canvasHeightDp - liveHeightDp).coerceAtLeast(0f).dp.toPx() }
+                                            var nextX = (offsetX + dragAmount.x).coerceIn(0f, maxXPx)
+                                            val nextY = (offsetY + dragAmount.y).coerceIn(0f, maxYPx)
+
+                                            // Live magnetic catch on the center vertical guide line
+                                            val centerXPx = with(density) { ((canvasWidthDp - liveWidthDp) / 2f).coerceAtLeast(0f).dp.toPx() }
+                                            if (abs(nextX - centerXPx) <= with(density) { 5.dp.toPx() }) {
+                                                nextX = centerXPx
+                                            }
+
+                                            offsetX = nextX
+                                            offsetY = nextY
+                                        }
+                                    )
+                                }
+                                .testTag("screen1_canvas_widget_${comp.id}")
+                        ) {
+                            when (typeUpper) {
+                                "S1_START", "S1_STOP" -> {
+                                    val solidTint = parseHexColorSafe(
+                                        comp.bgColorHex,
+                                        if (isStart) Color(0xFF10B981) else Color(0xFFEF4444)
+                                    )
+                                    if (bgBitmap != null) {
+                                        Image(
+                                            bitmap = bgBitmap,
+                                            contentDescription = "${comp.label} Background",
+                                            contentScale = ContentScale.Crop,
+                                            modifier = Modifier
+                                                .fillMaxSize()
+                                                .clip(RoundedCornerShape(14.dp))
+                                        )
+                                    } else if (solidTint.alpha > 0f) {
+                                        Box(
+                                            modifier = Modifier
+                                                .fillMaxSize()
+                                                .background(
+                                                    Brush.horizontalGradient(
+                                                        colors = listOf(
+                                                            solidTint.copy(alpha = 0.38f),
+                                                            solidTint.copy(alpha = 0.18f)
+                                                        )
+                                                    )
+                                                )
+                                        )
+                                    }
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxSize()
+                                            .padding(horizontal = 12.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.Center
+                                    ) {
+                                        Box(
+                                            modifier = Modifier
+                                                .size(26.dp)
+                                                .clip(CircleShape)
+                                                .background(if (isStart) Color(0xFF10B981) else Color(0xFFEF4444)),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Icon(
+                                                imageVector = if (isStart) Icons.Default.PlayArrow else Icons.Default.Stop,
+                                                contentDescription = null,
+                                                tint = Color.White,
+                                                modifier = Modifier.size(15.dp)
+                                            )
+                                        }
+                                        Spacer(Modifier.width(10.dp))
+                                        Text(
+                                            text = comp.label,
+                                            color = widgetTextColor,
+                                            fontSize = 12.5.sp,
+                                            fontWeight = FontWeight.ExtraBold,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    }
+                                }
+
+                                "S1_TEXT" -> {
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxSize()
+                                            .padding(horizontal = 12.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                                    ) {
+                                        Box(
+                                            modifier = Modifier
+                                                .size(26.dp)
+                                                .clip(RoundedCornerShape(7.dp))
+                                                .background(Color(0xFF6366F1)),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Text(
+                                                text = "T",
+                                                color = Color.White,
+                                                fontSize = 13.sp,
+                                                fontWeight = FontWeight.ExtraBold
+                                            )
+                                        }
+                                        Column(modifier = Modifier.weight(1f)) {
+                                            Text(
+                                                text = "Text View",
+                                                color = Color(0xFFCBD5E1),
+                                                fontSize = 9.5.sp,
+                                                fontWeight = FontWeight.SemiBold,
+                                                maxLines = 1
+                                            )
+                                            Text(
+                                                text = comp.label,
+                                                color = widgetTextColor,
+                                                fontSize = 12.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis
+                                            )
+                                        }
+                                    }
+                                }
+
+                                "S1_LINK" -> {
+                                    // Transparent background; shows custom side logo if added, or clean text if not added
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxSize()
+                                            .padding(horizontal = 12.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.SpaceBetween
+                                    ) {
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                            modifier = Modifier.weight(1f)
+                                        ) {
+                                            if (customBitmap != null) {
+                                                Image(
+                                                    bitmap = customBitmap,
+                                                    contentDescription = "Link Side Logo",
+                                                    contentScale = ContentScale.Crop,
+                                                    modifier = Modifier
+                                                        .size(26.dp)
+                                                        .clip(RoundedCornerShape(7.dp))
+                                                )
+                                            }
+                                            Column(modifier = Modifier.weight(1f)) {
+                                                Text(
+                                                    text = comp.label,
+                                                    color = widgetTextColor,
+                                                    fontSize = 12.sp,
+                                                    fontWeight = FontWeight.Bold,
+                                                    maxLines = 1,
+                                                    overflow = TextOverflow.Ellipsis
+                                                )
+                                                if (comp.linkUrl.isNotBlank()) {
+                                                    Text(
+                                                        text = comp.linkUrl,
+                                                        color = Color(0xFF94A3B8),
+                                                        fontSize = 9.5.sp,
+                                                        maxLines = 1,
+                                                        overflow = TextOverflow.Ellipsis
+                                                    )
+                                                }
+                                            }
+                                        }
+                                        Text(
+                                            text = "›",
+                                            color = Color(0xFF94A3B8),
+                                            fontSize = 16.sp,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                    }
+                                }
+
+                                "S1_IMAGE" -> {
+                                    if (customBitmap != null) {
+                                        Image(
+                                            bitmap = customBitmap,
+                                            contentDescription = comp.label,
+                                            contentScale = ContentScale.Crop,
+                                            modifier = Modifier
+                                                .fillMaxSize()
+                                                .clip(RoundedCornerShape(14.dp))
+                                        )
+                                    } else {
+                                        Box(
+                                            modifier = Modifier
+                                                .fillMaxSize()
+                                                .padding(10.dp)
+                                                .clip(RoundedCornerShape(10.dp))
+                                                .background(
+                                                    Brush.verticalGradient(
+                                                        colors = listOf(Color(0xFF312E81), Color(0xFF1E3A8A))
+                                                    )
+                                                ),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Column(
+                                                horizontalAlignment = Alignment.CenterHorizontally,
+                                                verticalArrangement = Arrangement.Center
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Default.Image,
+                                                    contentDescription = "Select Image",
+                                                    tint = Color.White,
+                                                    modifier = Modifier.size(22.dp)
+                                                )
+                                                Spacer(Modifier.height(2.dp))
+                                                Text(
+                                                    text = "Image View",
+                                                    color = Color(0xFFE2E8F0),
+                                                    fontSize = 9.sp,
+                                                    fontWeight = FontWeight.Bold
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+                            // 8 Anchor Dots around Widget Boundary (matching screenshot)
+                            val dotColor = accentBorderColor
+                            val anchors = listOf(
+                                Alignment.TopStart,
+                                Alignment.TopCenter,
+                                Alignment.TopEnd,
+                                Alignment.CenterStart,
+                                Alignment.CenterEnd,
+                                Alignment.BottomStart,
+                                Alignment.BottomCenter
+                            )
+                            anchors.forEach { align ->
+                                Box(
+                                    modifier = Modifier
+                                        .align(align)
+                                        .padding(1.dp)
+                                        .size(6.dp)
+                                        .clip(CircleShape)
+                                        .background(dotColor)
+                                )
+                            }
+
+                            // Snap-to-guide feedback pill when selected
+                            if (isSelected && isCenteredSnap) {
+                                Surface(
+                                    shape = RoundedCornerShape(bottomEnd = 6.dp),
+                                    color = Color(0xFF059669).copy(alpha = 0.9f),
+                                    modifier = Modifier.align(Alignment.TopStart)
+                                ) {
+                                    Text(
+                                        text = "✓ Centered • ${liveWidthDp.roundToInt()}×${liveHeightDp.roundToInt()}",
+                                        color = Color.White,
+                                        fontSize = 7.5.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.5.dp)
+                                    )
+                                }
+                            }
+
+                            // Computer-Tab Corner Resize Handle (Bottom-Right ↘)
+                            Box(
+                                modifier = Modifier
+                                    .align(Alignment.BottomEnd)
+                                    .size(18.dp)
+                                    .clip(RoundedCornerShape(topStart = 6.dp, bottomEnd = 12.dp))
+                                    .background(
+                                        if (isSelected) accentBorderColor.copy(alpha = 0.92f)
+                                        else Color(0xFF0F172A).copy(alpha = 0.7f)
+                                    )
+                                    .pointerInput(comp.id, matchingSlot, canvasWidthDp, canvasHeightDp) {
+                                        detectDragGestures(
+                                            onDragStart = { onSelectComponent(comp.id) },
+                                            onDragEnd = {
+                                                val maxW = (canvasWidthDp - 12f).roundToInt().coerceAtLeast(100)
+                                                val maxH = (canvasHeightDp - 16f).roundToInt().coerceAtLeast(100)
+                                                var finalW = liveWidthDp.roundToInt().coerceIn(60, maxW)
+                                                var finalH = liveHeightDp.roundToInt().coerceIn(32, maxH)
+
+                                                // Magnetic size snap to responsive guide width or recommended height
+                                                val recResponsiveW = (canvasWidthDp * 0.82f).roundToInt().coerceIn(140, maxW)
+                                                if (abs(finalW - recResponsiveW) <= 14) {
+                                                    finalW = recResponsiveW
+                                                } else if (matchingSlot != null && abs(finalW - matchingSlot.recW) <= 12) {
+                                                    finalW = matchingSlot.recW.coerceIn(60, maxW)
+                                                }
+                                                if (matchingSlot != null && abs(finalH - matchingSlot.recH) <= 10) {
+                                                    finalH = matchingSlot.recH.coerceIn(32, maxH)
+                                                }
+
+                                                liveWidthDp = finalW.toFloat()
+                                                liveHeightDp = finalH.toFloat()
+                                                onResizeComponent(comp.id, finalW, finalH)
+                                            },
+                                            onDrag = { change, dragAmount ->
+                                                change.consume()
+                                                val dxDp = with(density) { dragAmount.x.toDp().value }
+                                                val dyDp = with(density) { dragAmount.y.toDp().value }
+                                                val maxW = (canvasWidthDp - 12f).coerceAtLeast(100f)
+                                                val maxH = (canvasHeightDp - 16f).coerceAtLeast(100f)
+                                                var nextW = (liveWidthDp + dxDp).coerceIn(60f, maxW)
+                                                var nextH = (liveHeightDp + dyDp).coerceIn(32f, maxH)
+
+                                                if (matchingSlot != null) {
+                                                    if (abs(nextW - matchingSlot.recW) <= 5f) {
+                                                        nextW = matchingSlot.recW.toFloat()
+                                                    }
+                                                    if (abs(nextH - matchingSlot.recH) <= 5f) {
+                                                        nextH = matchingSlot.recH.toFloat()
+                                                    }
+                                                }
+                                                liveWidthDp = nextW
+                                                liveHeightDp = nextH
+                                            }
+                                        )
+                                    }
+                                    .testTag("widget_resize_handle_${comp.id}"),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Text(
+                                    text = "↘",
+                                    color = Color.White,
+                                    fontSize = 9.5.sp,
+                                    fontWeight = FontWeight.ExtraBold
+                                )
+                            }
+                        }
+                    }
+                }
+
+                // 4. Bottom Guide Pill inside Phone Preview (exact match with screenshot)
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(Color(0xFF070C1A))
+                        .padding(horizontal = 10.dp, vertical = 6.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Surface(
+                        shape = RoundedCornerShape(99.dp),
+                        color = Color(0xFF0F172A),
+                        border = BorderStroke(1.dp, Color(0xFF283B66))
+                    ) {
+                        Text(
+                            text = "Drag widgets • Snap to guide • Full screen layout",
+                            color = Color(0xFFCBD5E1),
+                            fontSize = 9.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp)
+                        )
+                    }
+                }
             }
         }
     }

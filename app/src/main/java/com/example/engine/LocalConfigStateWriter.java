@@ -287,7 +287,7 @@ public class LocalConfigStateWriter {
             }
             Set<String> testedPaths = new LinkedHashSet<String>();
             for (DynamicOverlayRegistry.OverlayItemSpec spec : items) {
-                if (spec == null || "LINK".equalsIgnoreCase(spec.type)) continue;
+                if (spec == null || "LINK".equalsIgnoreCase(spec.type) || (spec.type != null && spec.type.trim().toUpperCase(Locale.US).startsWith("S1_"))) continue;
                 String rawTarget = spec.targetFilePath != null ? spec.targetFilePath.trim() : "";
                 if (rawTarget.isEmpty()) continue;
 
@@ -1150,7 +1150,7 @@ public class LocalConfigStateWriter {
 
         if (registrySpecs != null) {
             for (DynamicOverlayRegistry.OverlayItemSpec spec : registrySpecs) {
-                if (spec == null) continue;
+                if (spec == null || (spec.type != null && spec.type.trim().toUpperCase(Locale.US).startsWith("S1_"))) continue;
                 String specKey = "widget_" + spec.id;
                 boolean isCurrentTriggeredWidget = specKey.equals(safeKey);
                 if (isCurrentTriggeredWidget) {

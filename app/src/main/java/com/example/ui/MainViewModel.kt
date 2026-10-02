@@ -19,6 +19,7 @@ import com.example.data.ComponentWidgetType
 import com.example.data.ConfigAuditRepository
 import com.example.data.ConfigWriteAuditEntity
 import com.example.data.StudioProjectEntity
+import com.example.data.isScreen1WidgetType
 import com.example.engine.AiBuildStepStatus
 import com.example.engine.AiChatTurn
 import com.example.engine.ConfigParameterSpec
@@ -73,6 +74,7 @@ data class StudioUiState(
     val destination: StudioDestination = StudioDestination.WELCOME_SCREEN,
     val isBundledStandaloneApk: Boolean = false,
     val activeProject: StudioProjectEntity? = null,
+    val activePreviewScreen: Int = 2,
     val selectedComponentId: Long? = null,
     val isLivePreviewMode: Boolean = false,
     val isSystemOverlayRunning: Boolean = false,
@@ -351,6 +353,21 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun openChangeBackgroundDialog(show: Boolean) {
         _uiState.update { it.copy(showChangeBackgroundDialog = show) }
+    }
+
+    fun selectPreviewScreen(screenNumber: Int) {
+        val safeScreen = if (screenNumber == 1) 1 else 2
+        _uiState.update {
+            it.copy(
+                activePreviewScreen = safeScreen,
+                selectedComponentId = null,
+                statusToast = if (safeScreen == 1) {
+                    "Preview 1: Main Screen Editor (Start, Stop, TextView, Link Open, ImageView)"
+                } else {
+                    "Preview 2: Floating Window Editor"
+                }
+            )
+        }
     }
 
     /**
@@ -793,14 +810,125 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     ) {
         val project = _uiState.value.activeProject ?: return
         val existingComponents = activeComponents.value
-        val existingCount = existingComponents.size
+        val isS1 = widgetType.isScreen1Widget
+        val sameScreenComps = existingComponents.filter { isScreen1WidgetType(it.type) == isS1 }
+        val existingCount = sameScreenComps.size
+        val defaultOffset = String.format(Locale.US, "0x%02X", 4 + (existingCount * 4))
+
+        if (isS1) {
+            val sameTypeCount = sameScreenComps.count { it.type == widgetType.name }
+            val shiftY = sameTypeCount * 14
+            var recX = 23
+            var recY = 180 + shiftY
+            var recW = 230
+            var recH = 48
+            var recBg = "#10B981"
+            var recText = "#FFFFFF"
+            var recLabel = customPrefix
+
+            when (widgetType) {
+                ComponentWidgetType.S1_START -> {
+                    recX = 18
+                    recY = 18 + shiftY
+                    recW = 220
+                    recH = 52
+                    recBg = "#10B981"
+                    recText = "#FFFFFF"
+                    recLabel = if (sameTypeCount == 0) "Floating Panel Start" else "Floating Panel Start #${sameTypeCount + 1}"
+                }
+                ComponentWidgetType.S1_STOP -> {
+                    recX = 18
+                    recY = 82 + shiftY
+                    recW = 220
+                    recH = 52
+                    recBg = "#EF4444"
+                    recText = "#FFFFFF"
+                    recLabel = if (sameTypeCount == 0) "Floating Panel Stop" else "Floating Panel Stop #${sameTypeCount + 1}"
+                }
+                ComponentWidgetType.S1_TEXT -> {
+                    recX = 18
+                    recY = 146 + shiftY
+                    recW = 220
+                    recH = 52
+                    recBg = "#00000000"
+                    recText = "#FFFFFF"
+                    recLabel = if (sameTypeCount == 0) "Custom Text" else "Custom Text #${sameTypeCount + 1}"
+                }
+                ComponentWidgetType.S1_LINK -> {
+                    recX = 18
+                    recY = 210 + shiftY
+                    recW = 220
+                    recH = 52
+                    recBg = "#00000000"
+                    recText = "#FFFFFF"
+                    recLabel = if (sameTypeCount == 0) "Link Open" else "Link Open #${sameTypeCount + 1}"
+                }
+                ComponentWidgetType.S1_IMAGE -> {
+                    recX = 18
+                    recY = 274 + shiftY
+                    recW = 220
+                    recH = 88
+                    recBg = "#00000000"
+                    recText = "#FFFFFF"
+                    recLabel = if (sameTypeCount == 0) "Image View" else "Image View #${sameTypeCount + 1}"
+                }
+                else -> Unit
+            }
+
+            viewModelScope.launch {
+                val entity = CanvasComponentEntity(
+                    projectId = project.id,
+                    type = widgetType.name,
+                    label = recLabel,
+                    posXDp = recX,
+                    posYDp = recY,
+                    widthDp = customWidthDp ?: recW,
+                    heightDp = customHeightDp ?: recH,
+                    bgColorHex = if (widgetType == ComponentWidgetType.S1_TEXT || widgetType == ComponentWidgetType.S1_LINK || widgetType == ComponentWidgetType.S1_IMAGE) {
+                        "#00000000"
+                    } else {
+                        customBgHex ?: recBg
+                    },
+                    textColorHex = customTextHex ?: recText,
+                    bgImagePath = "",
+                    customImagePath = "",
+                    soundTrigger = "NONE",
+                    customSoundPath = "",
+                    offSoundTrigger = "NONE",
+                    offCustomSoundPath = "",
+                    targetFilePath = "",
+                    byteOffsetHex = "S1_WIDGET",
+                    onPayloadHex = "",
+                    offPayloadHex = "",
+                    sliderMax = 100,
+                    currentValue = "0",
+                    linkUrl = if (widgetType == ComponentWidgetType.S1_LINK) "https://instagram.com" else "",
+                    borderColorHex = "#00000000",
+                    borderStrokePercent = 0,
+                    borderAnimation = "NONE"
+                )
+                val newId = studioDao.insertComponent(entity)
+                val updatedProj = project.copy(updatedAt = System.currentTimeMillis())
+                studioDao.updateProject(updatedProj)
+                syncOverlayRegistryInBackground(updatedProj)
+                _uiState.update {
+                    it.copy(
+                        activePreviewScreen = 1,
+                        selectedComponentId = newId,
+                        customEditedKotlinFiles = emptyMap(),
+                        statusToast = "Added '${entity.label}' to Screen 1 (Drag corner ↘ to resize or snap to recommended dhancha)."
+                    )
+                }
+            }
+            return
+        }
+
         val staggerX = (10 + (existingCount * 6) % 24).coerceAtMost((project.canvasWidthDp - 180).coerceAtLeast(8))
-        val staggerY = if (existingComponents.isEmpty()) {
+        val staggerY = if (sameScreenComps.isEmpty()) {
             10
         } else {
-            existingComponents.maxOf { it.posYDp + it.heightDp } + 8
+            sameScreenComps.maxOf { it.posYDp + it.heightDp } + 8
         }
-        val defaultOffset = String.format(Locale.US, "0x%02X", 4 + (existingCount * 4))
 
         val (defaultW, defaultH, defaultBg) = when (widgetType) {
             ComponentWidgetType.BUTTON -> Triple(176, 44, "#334155")
@@ -810,6 +938,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             ComponentWidgetType.INPUT -> Triple(186, 42, "#FFFFFF")
             ComponentWidgetType.IMAGE -> Triple(64, 64, "#1E293B")
             ComponentWidgetType.LINK -> Triple(190, 42, "#0F172A")
+            else -> Triple(176, 44, "#334155")
         }
 
         val resolvedTextHex = customTextHex ?: when (widgetType) {
@@ -925,6 +1054,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         var currentYDp = 8
 
         for (comp in list) {
+            if (isScreen1WidgetType(comp.type)) continue
             val cleanHeightDp = when (comp.type) {
                 ComponentWidgetType.SLIDER.name -> 54
                 ComponentWidgetType.IMAGE.name -> 58
@@ -1075,37 +1205,39 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun updateComponentPosition(component: CanvasComponentEntity, newXDp: Int, newYDp: Int) {
         val project = _uiState.value.activeProject
-        if (project?.autoFixSize == true) return
-        val maxW = project?.canvasWidthDp ?: 310
-        val clampedX = newXDp.coerceIn(0, (maxW - 36).coerceAtLeast(0))
-        val clampedY = newYDp.coerceIn(-300, 2500)
+        val isS1 = isScreen1WidgetType(component.type)
+        if (!isS1 && project?.autoFixSize == true) return
+        val maxW = if (isS1) 320 else (project?.canvasWidthDp ?: 310)
+        val clampedX = newXDp.coerceIn(0, (maxW - 28).coerceAtLeast(0))
+        val clampedY = newYDp.coerceIn(0, 2500)
         updateComponent(component.copy(posXDp = clampedX, posYDp = clampedY))
     }
 
     /**
-     * Resizes a widget on the canvas (widthDp & heightDp) like an image crop box
-     * when the user drags its edge or corner crop handles (disabled when Auto Fix Size is ON).
+     * Resizes a widget on the canvas (widthDp & heightDp) from its corner handle like a computer tab.
      */
-    fun resizeComponent(component: CanvasComponentEntity, deltaWidthDp: Int, deltaHeightDp: Int) {
+    fun resizeComponent(component: CanvasComponentEntity, newWidthDp: Int, newHeightDp: Int) {
         val project = _uiState.value.activeProject
-        if (project?.autoFixSize == true) return
-        val maxW = (project?.canvasWidthDp ?: 380).coerceAtLeast(100)
-        val maxH = (project?.canvasHeightDp ?: 500).coerceAtLeast(80)
-        val newW = (component.widthDp + deltaWidthDp).coerceIn(44, maxW)
-        val newH = (component.heightDp + deltaHeightDp).coerceIn(28, maxH)
+        val isS1 = isScreen1WidgetType(component.type)
+        if (!isS1 && project?.autoFixSize == true) return
+        val maxW = if (isS1) 300 else (project?.canvasWidthDp ?: 380).coerceAtLeast(100)
+        val maxH = if (isS1) 360 else (project?.canvasHeightDp ?: 500).coerceAtLeast(80)
+        val newW = newWidthDp.coerceIn(36, maxW)
+        val newH = newHeightDp.coerceIn(24, maxH)
         if (newW == component.widthDp && newH == component.heightDp) return
         val updated = component.copy(widthDp = newW, heightDp = newH)
         updateComponent(updated)
         _uiState.update {
             it.copy(
                 selectedComponentId = component.id,
-                statusToast = "Widget '${component.label}' Crop Size: ${newW}dp × ${newH}dp"
+                statusToast = "Widget '${component.label}' Size: ${newW}dp × ${newH}dp"
             )
         }
     }
 
     fun duplicateSelectedComponent(component: CanvasComponentEntity) {
         val project = _uiState.value.activeProject
+        val isS1 = isScreen1WidgetType(component.type)
         viewModelScope.launch {
             val copy = component.copy(
                 id = 0,
@@ -1114,7 +1246,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 posYDp = (component.posYDp + 16).coerceAtMost(320)
             )
             val newId = studioDao.insertComponent(copy)
-            if (project?.autoFixSize == true) {
+            if (!isS1 && project?.autoFixSize == true) {
                 relayoutComponentsForAutoFix(project.id, project.canvasWidthDp)
             }
             _uiState.update {
@@ -1130,9 +1262,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun deleteComponent(componentId: Long) {
         val project = _uiState.value.activeProject
         viewModelScope.launch {
+            val existing = activeComponents.value.find { it.id == componentId }
+            val isS1 = existing != null && isScreen1WidgetType(existing.type)
             studioDao.deleteComponentById(componentId)
-            if (project?.autoFixSize == true) {
+            if (!isS1 && project?.autoFixSize == true) {
                 relayoutComponentsForAutoFix(project.id, project.canvasWidthDp)
+            }
+            if (project != null) {
+                syncOverlayRegistryInBackground(project)
             }
             _uiState.update { state ->
                 state.copy(
@@ -1146,13 +1283,21 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     fun clearEntireCanvas() {
         val project = _uiState.value.activeProject ?: return
+        val activeScreen = _uiState.value.activePreviewScreen
         viewModelScope.launch {
-            studioDao.deleteAllComponentsForProject(project.id)
+            val currentList = studioDao.getComponentsForProjectSync(project.id)
+            for (comp in currentList) {
+                val isS1 = isScreen1WidgetType(comp.type)
+                if ((activeScreen == 1 && isS1) || (activeScreen == 2 && !isS1)) {
+                    studioDao.deleteComponentById(comp.id)
+                }
+            }
+            syncOverlayRegistryInBackground(project)
             _uiState.update {
                 it.copy(
                     selectedComponentId = null,
                     customEditedKotlinFiles = emptyMap(),
-                    statusToast = "Canvas cleared to 100% Blank state."
+                    statusToast = "Cleared Screen $activeScreen widgets."
                 )
             }
         }
@@ -1296,10 +1441,22 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val isTurningOn: Boolean
 
         when (component.type) {
-            ComponentWidgetType.TEXT.name -> {
+            ComponentWidgetType.S1_START.name -> {
+                launchSystemFloatingOverlay()
                 return
             }
-            ComponentWidgetType.LINK.name, ComponentWidgetType.IMAGE.name -> {
+            ComponentWidgetType.S1_STOP.name -> {
+                stopSystemFloatingOverlay()
+                return
+            }
+            ComponentWidgetType.TEXT.name,
+            ComponentWidgetType.S1_TEXT.name,
+            ComponentWidgetType.S1_IMAGE.name -> {
+                return
+            }
+            ComponentWidgetType.LINK.name,
+            ComponentWidgetType.S1_LINK.name,
+            ComponentWidgetType.IMAGE.name -> {
                 val rawUrl = component.linkUrl.trim().ifEmpty { component.onPayloadHex.trim() }
                 if (rawUrl.isNotEmpty()) {
                     val formatted = if (rawUrl.startsWith("http://") || rawUrl.startsWith("https://")) rawUrl else "https://$rawUrl"

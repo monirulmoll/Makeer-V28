@@ -266,7 +266,15 @@ extends Service {
         header.setPadding(this.dpToPx(10), this.dpToPx(8), this.dpToPx(8), this.dpToPx(8));
         header.setBackgroundColor(0);
 
-        List<DynamicOverlayRegistry.OverlayItemSpec> specs = DynamicOverlayRegistry.getActiveItems();
+        List<DynamicOverlayRegistry.OverlayItemSpec> rawSpecs = DynamicOverlayRegistry.getActiveItems();
+        List<DynamicOverlayRegistry.OverlayItemSpec> specs = new java.util.ArrayList<DynamicOverlayRegistry.OverlayItemSpec>();
+        if (rawSpecs != null) {
+            for (DynamicOverlayRegistry.OverlayItemSpec s : rawSpecs) {
+                if (s != null && (s.type == null || !s.type.trim().toUpperCase(java.util.Locale.US).startsWith("S1_"))) {
+                    specs.add(s);
+                }
+            }
+        }
         String activeTitle = DynamicOverlayRegistry.getActiveOverlayTitle();
         String displayTitle = activeTitle != null && !activeTitle.trim().isEmpty() ? activeTitle.trim() : DynamicOverlayRegistry.getActiveProjectName();
         if (displayTitle == null || displayTitle.trim().isEmpty()) {

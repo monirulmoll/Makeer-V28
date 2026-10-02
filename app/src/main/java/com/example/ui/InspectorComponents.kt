@@ -264,6 +264,17 @@ fun ComponentPropertyInspectorSheet(
     onOpenCodeEditor: () -> Unit,
     onClose: () -> Unit
 ) {
+    if (com.example.data.isScreen1WidgetType(component.type)) {
+        Screen1WidgetPropertyInspectorSheet(
+            component = component,
+            onSaveComponent = onSaveComponent,
+            onDuplicateComponent = onDuplicateComponent,
+            onDeleteComponent = onDeleteComponent,
+            onClose = onClose
+        )
+        return
+    }
+
     val context = LocalContext.current
     var activeTab by remember { mutableStateOf("Main") }
     var label by remember(component.id) { mutableStateOf(component.label) }
@@ -2311,3 +2322,760 @@ fun ComponentPropertyInspectorSheet(
         }
     }
 }
+
+@Composable
+fun Screen1WidgetPropertyInspectorSheet(
+    component: CanvasComponentEntity,
+    onSaveComponent: (CanvasComponentEntity) -> Unit,
+    onDuplicateComponent: (CanvasComponentEntity) -> Unit,
+    onDeleteComponent: (CanvasComponentEntity) -> Unit,
+    onClose: () -> Unit
+) {
+    val context = LocalContext.current
+    val typeUpper = component.type.trim().uppercase()
+    val isStartOrStop = typeUpper == "S1_START" || typeUpper == "S1_STOP"
+    val isTextView = typeUpper == "S1_TEXT"
+    val isLinkOpen = typeUpper == "S1_LINK"
+    val isImageView = typeUpper == "S1_IMAGE"
+
+    var label by remember(component.id) { mutableStateOf(component.label) }
+    var bgHex by remember(component.id) {
+        mutableStateOf(
+            if (isTextView || isLinkOpen || isImageView) "#00000000" else component.bgColorHex
+        )
+    }
+    var textHex by remember(component.id) {
+        mutableStateOf(
+            if ((isTextView || isLinkOpen) && component.textColorHex.equals("#00000000", ignoreCase = true)) {
+                "#FFFFFF"
+            } else {
+                component.textColorHex
+            }
+        )
+    }
+    var bgImagePath by remember(component.id, component.bgImagePath) {
+        mutableStateOf(component.bgImagePath)
+    }
+    var customImagePath by remember(component.id, component.customImagePath) {
+        mutableStateOf(component.customImagePath)
+    }
+    var linkUrl by remember(component.id, component.linkUrl) {
+        mutableStateOf(component.linkUrl)
+    }
+    var posX by remember(component.id, component.posXDp) { mutableStateOf(component.posXDp) }
+    var posY by remember(component.id, component.posYDp) { mutableStateOf(component.posYDp) }
+    var widthDp by remember(component.id, component.widthDp) { mutableStateOf(component.widthDp) }
+    var heightDp by remember(component.id, component.heightDp) { mutableStateOf(component.heightDp) }
+
+    val matchingDhanche = remember(typeUpper) {
+        Screen1RecommendedDhancheSlots.find { it.widgetType.equals(typeUpper, ignoreCase = true) }
+    }
+
+    fun buildScreen1Updated(
+        overrideLabel: String = label,
+        overrideBgHex: String = bgHex,
+        overrideTextHex: String = textHex,
+        overrideBgImagePath: String = bgImagePath,
+        overrideCustomImagePath: String = customImagePath,
+        overrideLinkUrl: String = linkUrl,
+        overridePosX: Int = posX,
+        overridePosY: Int = posY,
+        overrideWidthDp: Int = widthDp,
+        overrideHeightDp: Int = heightDp
+    ): CanvasComponentEntity {
+        val enforcedBgHex = if (isTextView || isLinkOpen || isImageView) {
+            "#00000000"
+        } else {
+            overrideBgHex.trim().ifEmpty { "#10B981" }
+        }
+        val enforcedTextHex = if (isTextView || isLinkOpen) {
+            val cleaned = overrideTextHex.trim().ifEmpty { "#FFFFFF" }
+            if (cleaned.equals("#00000000", ignoreCase = true)) "#FFFFFF" else cleaned
+        } else {
+            overrideTextHex.trim().ifEmpty { "#FFFFFF" }
+        }
+        return component.copy(
+            label = overrideLabel.trim().ifEmpty { component.label },
+            bgColorHex = enforcedBgHex,
+            textColorHex = enforcedTextHex,
+            bgImagePath = overrideBgImagePath.trim(),
+            customImagePath = overrideCustomImagePath.trim(),
+            linkUrl = overrideLinkUrl.trim(),
+            posXDp = overridePosX,
+            posYDp = overridePosY,
+            widthDp = overrideWidthDp,
+            heightDp = overrideHeightDp
+        )
+    }
+
+    // Image picker for Start/Stop background image, Link Open side logo, or ImageView main image
+    val screen1ImagePickerLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent()
+    ) { uri ->
+        if (uri != null) {
+            try {
+                val destDir = File(context.filesDir, "widget_bg_images").apply { mkdirs() }
+                val destFile = File(destDir, "s1_img_${component.id}_${System.currentTimeMillis()}.png")
+                context.contentResolver.openInputStream(uri)?.use { input ->
+                    FileOutputStream(destFile).use { output ->
+                        input.copyTo(output)
+                    }
+                }
+                if (destFile.exists() && destFile.length() > 0L) {
+                    val savedPath = destFile.absolutePath
+                    if (isStartOrStop) {
+                        bgImagePath = savedPath
+                        onSaveComponent(buildScreen1Updated(overrideBgImagePath = savedPath))
+                    } else {
+                        // For S1_LINK (side logo) and S1_IMAGE (image view), save in both customImagePath and bgImagePath so APK compiler bundles it too
+                        customImagePath = savedPath
+                        bgImagePath = savedPath
+                        onSaveComponent(
+                            buildScreen1Updated(
+                                overrideCustomImagePath = savedPath,
+                                overrideBgImagePath = savedPath
+                            )
+                        )
+                    }
+                }
+            } catch (_: Exception) {
+            }
+        }
+    }
+
+    val activePreviewPath = if (isStartOrStop) bgImagePath else customImagePath.ifBlank { bgImagePath }
+    val previewBitmap = remember(activePreviewPath) {
+        if (activePreviewPath.isNotBlank()) {
+            val f = File(activePreviewPath)
+            if (f.exists()) BitmapFactory.decodeFile(f.absolutePath)?.asImageBitmap() else null
+        } else null
+    }
+
+    val widgetTitle = when (typeUpper) {
+        "S1_START" -> "Start Button (Screen 1)"
+        "S1_STOP" -> "Stop Button (Screen 1)"
+        "S1_TEXT" -> "Text View (Screen 1)"
+        "S1_LINK" -> "Link Open (Screen 1)"
+        "S1_IMAGE" -> "Image View (Screen 1)"
+        else -> "Screen 1 Widget"
+    }
+
+    val s1CardBg = Color(0xFF0A1428)
+    val solidPresetColors: List<Pair<String, String>> = remember {
+        listOf(
+            "Green" to "#10B981",
+            "Red" to "#EF4444",
+            "Royal Blue" to "#2563EB",
+            "Indigo" to "#4F46E5",
+            "Purple" to "#7C3AED",
+            "Cyan" to "#06B6D4",
+            "Gold" to "#F59E0B",
+            "Pink" to "#EC4899",
+            "Dark Navy" to "#1E293B",
+            "Midnight" to "#0F172A",
+            "Black" to "#000000",
+            "White" to "#FFFFFF"
+        )
+    }
+    val solidTextColors: List<Pair<String, String>> = remember {
+        listOf(
+            "White" to "#FFFFFF",
+            "Cyan" to "#38BDF8",
+            "Green" to "#10B981",
+            "Yellow" to "#FACC15",
+            "Orange" to "#FB923C",
+            "Pink" to "#F472B6",
+            "Purple" to "#A78BFA",
+            "Red" to "#EF4444",
+            "Dark" to "#0F172A",
+            "Black" to "#000000"
+        )
+    }
+
+    Surface(
+        shape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp),
+        color = InspectorDarkBg,
+        border = BorderStroke(1.dp, Color(0xFF152342)),
+        tonalElevation = 12.dp,
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(max = 285.dp)
+            .testTag("screen1_widget_inspector_sheet")
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 14.dp, vertical = 10.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            // Header Row
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.weight(1f)
+                ) {
+                    IconButton(
+                        onClick = onClose,
+                        modifier = Modifier.size(28.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = "Back",
+                            tint = Color.White,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
+
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = widgetTitle,
+                            color = Color.White,
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                        Text(
+                            text = when (typeUpper) {
+                                "S1_START" -> "Starts & opens the Floating Window"
+                                "S1_STOP" -> "Stops & closes the Floating Window"
+                                "S1_TEXT" -> "Always transparent background • Custom text color"
+                                "S1_LINK" -> "Always transparent background • Opens link on tap"
+                                "S1_IMAGE" -> "Simple Image View • Corner resizable"
+                                else -> "Screen 1 Main Screen Widget"
+                            },
+                            color = Color(0xFF38BDF8),
+                            fontSize = 10.sp,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
+
+                IconButton(
+                    onClick = onClose,
+                    modifier = Modifier
+                        .size(28.dp)
+                        .testTag("inspector_close_button")
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Close,
+                        contentDescription = "Close inspector",
+                        tint = Color.White,
+                        modifier = Modifier.size(16.dp)
+                    )
+                }
+            }
+
+            // Scrollable Inspector Body tailored to the exact Screen 1 widget type
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f, fill = false)
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                // 1) IMAGE VIEW: Pure & Simple — ONLY image selection option!
+                if (isImageView) {
+                    Surface(
+                        color = s1CardBg,
+                        shape = RoundedCornerShape(12.dp),
+                        border = BorderStroke(1.dp, InspectorFieldBorder),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(12.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Text(
+                                text = "IMAGE VIEW SOURCE",
+                                color = Color(0xFFFBBF24),
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.ExtraBold
+                            )
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Surface(
+                                    onClick = { screen1ImagePickerLauncher.launch("image/*") },
+                                    color = InspectorPurpleButton,
+                                    shape = RoundedCornerShape(10.dp),
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .testTag("s1_image_pick_button")
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                                        horizontalArrangement = Arrangement.Center,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Image,
+                                            contentDescription = null,
+                                            tint = Color.White,
+                                            modifier = Modifier.size(16.dp)
+                                        )
+                                        Spacer(Modifier.width(6.dp))
+                                        Text(
+                                            text = if (previewBitmap != null) "Change Image" else "Add Image from Gallery",
+                                            color = Color.White,
+                                            fontSize = 12.sp,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                    }
+                                }
+
+                                if (previewBitmap != null) {
+                                    OutlinedButton(
+                                        onClick = {
+                                            customImagePath = ""
+                                            bgImagePath = ""
+                                            onSaveComponent(
+                                                buildScreen1Updated(
+                                                    overrideCustomImagePath = "",
+                                                    overrideBgImagePath = ""
+                                                )
+                                            )
+                                        },
+                                        border = BorderStroke(1.dp, Color(0xFFEF4444))
+                                    ) {
+                                        Text("Remove", color = Color(0xFFF87171), fontSize = 11.sp)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // 2) START / STOP / TEXT VIEW / LINK OPEN: Editable Display Text
+                if (!isImageView) {
+                    OutlinedTextField(
+                        value = label,
+                        onValueChange = {
+                            label = it
+                            onSaveComponent(buildScreen1Updated(overrideLabel = it))
+                        },
+                        label = {
+                            Text(
+                                text = when {
+                                    isLinkOpen -> "Display Text (Click to Open Link)"
+                                    isTextView -> "Text View Content"
+                                    else -> "Button Text"
+                                },
+                                color = InspectorSubtitleColor,
+                                fontSize = 11.sp
+                            )
+                        },
+                        singleLine = true,
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedContainerColor = InspectorFieldBg,
+                            unfocusedContainerColor = InspectorFieldBg,
+                            focusedBorderColor = Color(0xFF38BDF8),
+                            unfocusedBorderColor = InspectorFieldBorder,
+                            focusedTextColor = Color.White,
+                            unfocusedTextColor = Color.White
+                        ),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("s1_label_input")
+                    )
+                }
+
+                // 3) LINK OPEN: Link URL + Optional Side Logo
+                if (isLinkOpen) {
+                    OutlinedTextField(
+                        value = linkUrl,
+                        onValueChange = {
+                            linkUrl = it
+                            onSaveComponent(buildScreen1Updated(overrideLinkUrl = it))
+                        },
+                        label = {
+                            Text(
+                                text = "Link URL (e.g. https://instagram.com/...)",
+                                color = InspectorSubtitleColor,
+                                fontSize = 11.sp
+                            )
+                        },
+                        singleLine = true,
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedContainerColor = InspectorFieldBg,
+                            unfocusedContainerColor = InspectorFieldBg,
+                            focusedBorderColor = Color(0xFF38BDF8),
+                            unfocusedBorderColor = InspectorFieldBorder,
+                            focusedTextColor = Color.White,
+                            unfocusedTextColor = Color.White
+                        ),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("s1_link_url_input")
+                    )
+
+                    // Optional Side Logo for Link Open
+                    Surface(
+                        color = s1CardBg,
+                        shape = RoundedCornerShape(12.dp),
+                        border = BorderStroke(1.dp, InspectorFieldBorder),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(10.dp),
+                            verticalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Text(
+                                text = if (previewBitmap != null) {
+                                    "SIDE LOGO: ACTIVE (Shown next to link text)"
+                                } else {
+                                    "SIDE LOGO: NONE (No empty logo box shown; text auto-fits)"
+                                },
+                                color = Color(0xFF38BDF8),
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                if (previewBitmap != null) {
+                                    Image(
+                                        bitmap = previewBitmap,
+                                        contentDescription = "Side Logo Preview",
+                                        contentScale = ContentScale.Crop,
+                                        modifier = Modifier
+                                            .size(30.dp)
+                                            .clip(RoundedCornerShape(6.dp))
+                                    )
+                                }
+                                Surface(
+                                    onClick = { screen1ImagePickerLauncher.launch("image/*") },
+                                    color = InspectorPurpleButton,
+                                    shape = RoundedCornerShape(8.dp),
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .testTag("s1_link_logo_pick_button")
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                                        horizontalArrangement = Arrangement.Center,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Image,
+                                            contentDescription = null,
+                                            tint = Color.White,
+                                            modifier = Modifier.size(14.dp)
+                                        )
+                                        Spacer(Modifier.width(5.dp))
+                                        Text(
+                                            text = if (previewBitmap != null) "Change Side Logo" else "Add Side Logo",
+                                            color = Color.White,
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                    }
+                                }
+                                if (previewBitmap != null) {
+                                    OutlinedButton(
+                                        onClick = {
+                                            customImagePath = ""
+                                            bgImagePath = ""
+                                            onSaveComponent(
+                                                buildScreen1Updated(
+                                                    overrideCustomImagePath = "",
+                                                    overrideBgImagePath = ""
+                                                )
+                                            )
+                                        },
+                                        border = BorderStroke(1.dp, Color(0xFFEF4444))
+                                    ) {
+                                        Text("No Logo", color = Color(0xFFF87171), fontSize = 10.sp)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // 4) START & STOP ONLY: Background Image + Transparent Background + Default Colors
+                if (isStartOrStop) {
+                    Surface(
+                        color = s1CardBg,
+                        shape = RoundedCornerShape(12.dp),
+                        border = BorderStroke(1.dp, InspectorFieldBorder),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(10.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = "BACKGROUND (IMAGE / TRANSPARENT / DEFAULT COLORS)",
+                                    color = InspectorSubtitleColor,
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.ExtraBold
+                                )
+                                Surface(
+                                    onClick = {
+                                        bgHex = "#00000000"
+                                        onSaveComponent(buildScreen1Updated(overrideBgHex = "#00000000"))
+                                    },
+                                    color = if (bgHex.equals("#00000000", ignoreCase = true)) Color(0xFF10B981) else Color(0xFF1E293B),
+                                    shape = RoundedCornerShape(6.dp),
+                                    modifier = Modifier.testTag("s1_bg_transparent_button")
+                                ) {
+                                    Text(
+                                        text = "Transparent BG",
+                                        color = Color.White,
+                                        fontSize = 10.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                    )
+                                }
+                            }
+
+                            // Background Image Picker Row
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Surface(
+                                    onClick = { screen1ImagePickerLauncher.launch("image/*") },
+                                    color = Color(0xFF1E293B),
+                                    border = BorderStroke(1.dp, Color(0xFF38BDF8)),
+                                    shape = RoundedCornerShape(8.dp),
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .testTag("s1_bg_image_pick_button")
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 7.dp),
+                                        horizontalArrangement = Arrangement.Center,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Icon(
+                                            imageVector = Icons.Default.Image,
+                                            contentDescription = null,
+                                            tint = Color(0xFF38BDF8),
+                                            modifier = Modifier.size(14.dp)
+                                        )
+                                        Spacer(Modifier.width(5.dp))
+                                        Text(
+                                            text = if (previewBitmap != null) "Change Background Image" else "Background Image Change",
+                                            color = Color.White,
+                                            fontSize = 11.sp,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                    }
+                                }
+                                if (previewBitmap != null) {
+                                    OutlinedButton(
+                                        onClick = {
+                                            bgImagePath = ""
+                                            onSaveComponent(buildScreen1Updated(overrideBgImagePath = ""))
+                                        },
+                                        border = BorderStroke(1.dp, Color(0xFFEF4444))
+                                    ) {
+                                        Text("Clear Img", color = Color(0xFFF87171), fontSize = 10.sp)
+                                    }
+                                }
+                            }
+
+                            // Default Background Color Swatches
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .horizontalScroll(rememberScrollState()),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                solidPresetColors.forEach { (name, hex) ->
+                                    val isSelectedColor = bgHex.equals(hex, ignoreCase = true)
+                                    val parsed = parseHexColorSafe(hex, Color(0xFF10B981))
+                                    Box(
+                                        modifier = Modifier
+                                            .size(28.dp)
+                                            .clip(CircleShape)
+                                            .background(parsed)
+                                            .border(
+                                                BorderStroke(
+                                                    if (isSelectedColor) 2.5.dp else 1.dp,
+                                                    if (isSelectedColor) Color.White else Color.White.copy(alpha = 0.4f)
+                                                ),
+                                                CircleShape
+                                            )
+                                            .clickable {
+                                                bgHex = hex
+                                                onSaveComponent(buildScreen1Updated(overrideBgHex = hex))
+                                            }
+                                            .testTag("s1_bg_color_${name.lowercase().replace(" ", "_")}")
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // 5) TEXT COLOR OPTIONS:
+                // - Start/Stop: Text Color Change + Text Transparent
+                // - TextView & Link Open: Text Color Change ONLY (NO Text Transparent option, and background is locked to Transparent)
+                if (!isImageView) {
+                    Surface(
+                        color = s1CardBg,
+                        shape = RoundedCornerShape(12.dp),
+                        border = BorderStroke(1.dp, InspectorFieldBorder),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(10.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = if (isTextView || isLinkOpen) {
+                                        "TEXT COLOR (Background is Always Transparent)"
+                                    } else {
+                                        "TEXT COLOR & TEXT TRANSPARENT"
+                                    },
+                                    color = InspectorSubtitleColor,
+                                    fontSize = 10.sp,
+                                    fontWeight = FontWeight.ExtraBold
+                                )
+
+                                // Text Transparent option ONLY for Start and Stop (explicitly excluded for TextView & Link Open)
+                                if (isStartOrStop) {
+                                    Surface(
+                                        onClick = {
+                                            textHex = "#00000000"
+                                            onSaveComponent(buildScreen1Updated(overrideTextHex = "#00000000"))
+                                        },
+                                        color = if (textHex.equals("#00000000", ignoreCase = true)) Color(0xFF10B981) else Color(0xFF1E293B),
+                                        shape = RoundedCornerShape(6.dp),
+                                        modifier = Modifier.testTag("s1_text_transparent_button")
+                                    ) {
+                                        Text(
+                                            text = "Text Transparent",
+                                            color = Color.White,
+                                            fontSize = 10.sp,
+                                            fontWeight = FontWeight.Bold,
+                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                        )
+                                    }
+                                }
+                            }
+
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .horizontalScroll(rememberScrollState()),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                solidTextColors.forEach { (name, hex) ->
+                                    val isSelectedText = textHex.equals(hex, ignoreCase = true)
+                                    val parsed = parseHexColorSafe(hex, Color.White)
+                                    Box(
+                                        modifier = Modifier
+                                            .size(28.dp)
+                                            .clip(CircleShape)
+                                            .background(parsed)
+                                            .border(
+                                                BorderStroke(
+                                                    if (isSelectedText) 2.5.dp else 1.dp,
+                                                    if (isSelectedText) Color(0xFF38BDF8) else Color.White.copy(alpha = 0.4f)
+                                                ),
+                                                CircleShape
+                                            )
+                                            .clickable {
+                                                textHex = hex
+                                                onSaveComponent(buildScreen1Updated(overrideTextHex = hex))
+                                            }
+                                            .testTag("s1_text_color_${name.lowercase().replace(" ", "_")}")
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // 6) Recommended Dhanche Snap + Delete / Duplicate Row
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    if (matchingDhanche != null) {
+                        OutlinedButton(
+                            onClick = {
+                                posX = matchingDhanche.recX
+                                posY = matchingDhanche.recY
+                                widthDp = matchingDhanche.recW
+                                heightDp = matchingDhanche.recH
+                                onSaveComponent(
+                                    buildScreen1Updated(
+                                        overridePosX = matchingDhanche.recX,
+                                        overridePosY = matchingDhanche.recY,
+                                        overrideWidthDp = matchingDhanche.recW,
+                                        overrideHeightDp = matchingDhanche.recH
+                                    )
+                                )
+                            },
+                            border = BorderStroke(1.dp, Color(0xFF10B981)),
+                            modifier = Modifier
+                                .weight(1.2f)
+                                .testTag("s1_snap_best_dhanche_button")
+                        ) {
+                            Text(
+                                text = "Best Fit (${matchingDhanche.recW}×${matchingDhanche.recH})",
+                                color = Color(0xFF10B981),
+                                fontSize = 10.5.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+
+                    OutlinedButton(
+                        onClick = { onDuplicateComponent(buildScreen1Updated()) },
+                        border = BorderStroke(1.dp, InspectorFieldBorder),
+                        modifier = Modifier
+                            .weight(1f)
+                            .testTag("inspector_duplicate_button")
+                    ) {
+                        Icon(Icons.Default.ContentCopy, contentDescription = null, tint = Color.White, modifier = Modifier.size(14.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text("Copy", color = Color.White, fontSize = 10.5.sp)
+                    }
+
+                    OutlinedButton(
+                        onClick = { onDeleteComponent(component) },
+                        border = BorderStroke(1.dp, Color(0xFFEF4444)),
+                        modifier = Modifier
+                            .weight(1f)
+                            .testTag("inspector_delete_button")
+                    ) {
+                        Icon(Icons.Default.Delete, contentDescription = null, tint = Color(0xFFF87171), modifier = Modifier.size(14.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text("Delete", color = Color(0xFFF87171), fontSize = 10.5.sp)
+                    }
+                }
+            }
+        }
+    }
+}
+
