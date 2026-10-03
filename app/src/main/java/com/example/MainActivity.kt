@@ -114,6 +114,7 @@ import com.example.engine.ShizukuPrivilegeBridge
 import com.example.ui.CompiledStandaloneAppScreen
 import com.example.ui.ComponentCountSummary
 import com.example.ui.ComponentTrackerBanner
+import com.example.ui.CreateNewLuaWidgetScreen
 import com.example.ui.KotlinProjectCodeEngine
 import com.example.ui.MainViewModel
 import com.example.ui.PropertyInspectorBottomDock
@@ -181,7 +182,8 @@ class MainActivity : ComponentActivity() {
                             onImportProjectUri = viewModel::importProjectFromUri,
                             onRefreshPermissions = viewModel::refreshOverlayPermission,
                             onOpenOnlineAiMode = viewModel::openOnlineAiMode,
-                            onBackToWelcome = viewModel::navigateBackToWelcome
+                            onBackToWelcome = viewModel::navigateBackToWelcome,
+                            onSaveDefaultButtonLogic = viewModel::saveDefaultButtonLogic
                         )
                     }
 
@@ -258,8 +260,19 @@ class MainActivity : ComponentActivity() {
                     }
 
                     StudioDestination.CANVAS_WORKSPACE -> {
+                        if (uiState.showCreateCustomWidgetScreen) {
+                            CreateNewLuaWidgetScreen(
+                                defaultButtonLogic = uiState.defaultButtonLogic,
+                                onBack = { viewModel.openCreateCustomWidgetScreen(false) },
+                                onCreateWidget = viewModel::createAndAddCustomLuaWidget
+                            )
+                            return@MyApplicationTheme
+                        }
+
                         BackHandler {
-                            if (uiState.showChangeBackgroundDialog) {
+                            if (uiState.showCreateCustomWidgetScreen) {
+                                viewModel.openCreateCustomWidgetScreen(false)
+                            } else if (uiState.showChangeBackgroundDialog) {
                                 viewModel.openChangeBackgroundDialog(false)
                             } else if (uiState.showEditFloatingPanelDialog) {
                                 viewModel.openEditFloatingPanelDialog(false)
@@ -339,7 +352,9 @@ class MainActivity : ComponentActivity() {
                             onRequestOrLaunchShizuku = viewModel::requestOrLaunchShizuku,
                             onTestAllTargetPaths = viewModel::testAllActiveTargetPathsNow,
                             onSetDefaultForAllWidgets = viewModel::setDefaultButtonLogicForAllWidgets,
-                            onClearLuaRuntimeLogs = viewModel::clearLuaRuntimeLogs
+                            onClearLuaRuntimeLogs = viewModel::clearLuaRuntimeLogs,
+                            onOpenCreateCustomWidget = { viewModel.openCreateCustomWidgetScreen(true) },
+                            onAddSavedCustomWidget = viewModel::addCustomWidgetSpecToCanvas
                         )
                     }
                 }
@@ -395,7 +410,9 @@ fun StudioCanvasBuilderScreen(
     onRequestOrLaunchShizuku: () -> Unit = {},
     onTestAllTargetPaths: () -> Unit = {},
     onSetDefaultForAllWidgets: () -> Unit = {},
-    onClearLuaRuntimeLogs: () -> Unit = {}
+    onClearLuaRuntimeLogs: () -> Unit = {},
+    onOpenCreateCustomWidget: () -> Unit = {},
+    onAddSavedCustomWidget: (com.example.engine.LuaCustomWidgetSpec) -> Unit = {}
 ) {
     val context = LocalContext.current
     val project = uiState.activeProject ?: return
@@ -2113,6 +2130,9 @@ fun StudioCanvasBuilderScreen(
                 onSaveDesign = { onSaveProjectDesign(selectedComponent) },
                 onTriggerComponentLive = onTriggerComponentLive,
                 onClearCanvas = onClearCanvas,
+                savedCustomWidgets = uiState.savedCustomWidgets,
+                onOpenCreateCustomWidget = onOpenCreateCustomWidget,
+                onAddSavedCustomWidget = onAddSavedCustomWidget,
                 modifier = Modifier.weight(1f)
             )
         }

@@ -27,6 +27,8 @@ import com.example.engine.ConfigParameterSpec
 import com.example.engine.GgufBlueprintEngine
 import com.example.engine.GgufModelState
 import com.example.engine.LocalConfigStateWriter
+import com.example.engine.LuaCustomWidgetEngine
+import com.example.engine.LuaCustomWidgetSpec
 import com.example.engine.LuaScriptEngine
 import com.example.engine.ShizukuPrivilegeBridge
 import com.example.engine.SoundTriggerPlayer
@@ -120,6 +122,9 @@ data class StudioUiState(
     val isShizukuInstalled: Boolean = false,
     val activeWriteErrorReport: LocalConfigStateWriter.WriteDiagnosticReport? = null,
     val luaRuntimeLogs: List<String> = emptyList(),
+    val showCreateCustomWidgetScreen: Boolean = false,
+    val savedCustomWidgets: List<LuaCustomWidgetSpec> = emptyList(),
+    val defaultButtonLogic: String = LuaCustomWidgetEngine.FALLBACK_DEFAULT_BUTTON_LOGIC,
     val statusToast: String = "Welcome to Studio Error — Choose Offline Mode or Online (AI) Mode."
 )
 
@@ -163,7 +168,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 null,
                 StudioGenerationMode.OFFLINE_MANUAL
             ),
-            termuxServerConfig = TermuxServerClient.loadConfig(appContext)
+            termuxServerConfig = TermuxServerClient.loadConfig(appContext),
+            savedCustomWidgets = LuaCustomWidgetEngine.getSavedCustomWidgetTemplates(appContext),
+            defaultButtonLogic = LuaCustomWidgetEngine.getDefaultButtonLogic(appContext)
         )
     )
     val uiState: StateFlow<StudioUiState> = _uiState.asStateFlow()
@@ -999,7 +1006,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val isNonExecutableWidget = widgetType == ComponentWidgetType.TEXT || widgetType == ComponentWidgetType.LINK
             val defaultLink = if (widgetType == ComponentWidgetType.LINK) "https://google.com" else ""
             val defaultOnPayload = if (isLua) {
-                LuaScriptEngine.defaultButtonLogicForWidget(defaultLabel, widgetType.name, defaultLink)
+                LuaScriptEngine.defaultButtonLogicForWidget(
+                    label = defaultLabel,
+                    type = widgetType.name,
+                    linkUrl = defaultLink,
+                    customDefaultButtonLogic = _uiState.value.defaultButtonLogic
+                )
             } else {
                 if (isNonExecutableWidget) "" else "On"
             }
@@ -2619,8 +2631,124 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun openCreateCustomWidgetScreen(show: Boolean) {
+        _uiState.update { it.copy(showCreateCustomWidgetScreen = show) }
+    }
+
+    fun saveDefaultButtonLogic(rawLogic: String) {
+        LuaCustomWidgetEngine.setDefaultButtonLogic(appContext, rawLogic)
+        val saved = LuaCustomWidgetEngine.getDefaultButtonLogic(appContext)
+        _uiState.update {
+            it.copy(
+                defaultButtonLogic = saved,
+                statusToast = "✅ Default Button Logic saved: $saved"
+            )
+        }
+    }
+
+    fun createAndAddCustomLuaWidget(rawCode: String) {
+        val code = rawCode.trim()
+        if (code.isEmpty()) {
+            _uiState.update { it.copy(statusToast = "Please write widget definition code first.") }
+            return
+        }
+        val spec = LuaCustomWidgetEngine.analyzeWidgetCode(
+            rawCode = code,
+            defaultButtonLogic = _uiState.value.defaultButtonLogic
+        )
+        LuaCustomWidgetEngine.saveCustomWidgetTemplate(appContext, spec)
+        val updatedTemplates = LuaCustomWidgetEngine.getSavedCustomWidgetTemplates(appContext)
+        _uiState.update {
+            it.copy(
+                savedCustomWidgets = updatedTemplates,
+                showCreateCustomWidgetScreen = false
+            )
+        }
+        addCustomWidgetSpecToCanvas(spec)
+    }
+
+    fun addCustomWidgetSpecToCanvas(spec: LuaCustomWidgetSpec) {
+        val project = _uiState.value.activeProject ?: return
+        val existingComponents = activeComponents.value.filter { !isScreen1WidgetType(it.type) }
+        val existingCount = existingComponents.size
+        val staggerX = (10 + (existingCount * 6) % 24).coerceAtMost((project.canvasWidthDp - 180).coerceAtLeast(8))
+        val staggerY = if (existingComponents.isEmpty()) {
+            10
+        } else {
+            existingComponents.maxOf { it.posYDp + it.heightDp } + 8
+        }
+
+        val sameNameCount = existingComponents.count {
+            it.label.equals(spec.widgetName, ignoreCase = true) ||
+                it.label.startsWith("${spec.widgetName} #", ignoreCase = true)
+        }
+        val resolvedWidgetName = if (sameNameCount == 0) {
+            spec.widgetName
+        } else {
+            "${spec.widgetName} #${sameNameCount + 1}"
+        }
+        val instanceSpec = spec.copy(widgetName = resolvedWidgetName)
+        val mappedWidgetType = instanceSpec.mapToComponentWidgetType()
+
+        viewModelScope.launch {
+            val baseEntity = CanvasComponentEntity(
+                projectId = project.id,
+                type = mappedWidgetType.name,
+                label = resolvedWidgetName,
+                posXDp = staggerX,
+                posYDp = staggerY,
+                widthDp = 196,
+                heightDp = 44,
+                bgColorHex = "#334155",
+                textColorHex = "#FFFFFF",
+                customImagePath = "",
+                soundTrigger = "NONE",
+                customSoundPath = "",
+                offSoundTrigger = "NONE",
+                offCustomSoundPath = "",
+                targetFilePath = "",
+                byteOffsetHex = "",
+                onPayloadHex = "",
+                offPayloadHex = "",
+                sliderMax = 100,
+                currentValue = "0",
+                linkUrl = "",
+                borderColorHex = "#38BDF8",
+                borderStrokePercent = 20,
+                borderAnimation = "NONE"
+            )
+            val entity = LuaCustomWidgetEngine.applySpecToComponent(baseEntity, instanceSpec)
+            val newId = studioDao.insertComponent(entity)
+            if (project.autoFixSize) {
+                relayoutComponentsForAutoFix(project.id, project.canvasWidthDp)
+            }
+            val updatedProj = project.copy(updatedAt = System.currentTimeMillis())
+            studioDao.updateProject(updatedProj)
+            syncOverlayRegistryInBackground(updatedProj)
+            _uiState.update {
+                it.copy(
+                    selectedComponentId = newId,
+                    showCreateCustomWidgetScreen = false,
+                    customEditedKotlinFiles = emptyMap(),
+                    statusToast = "✅ Created '${instanceSpec.widgetName}' [Type: ${instanceSpec.displayTypeBadge()}] (${instanceSpec.properties.size} prop(s), ${instanceSpec.events.size} event(s))"
+                )
+            }
+        }
+    }
+
+    fun deleteSavedCustomWidgetTemplate(widgetId: String) {
+        LuaCustomWidgetEngine.deleteCustomWidgetTemplate(appContext, widgetId)
+        _uiState.update {
+            it.copy(
+                savedCustomWidgets = LuaCustomWidgetEngine.getSavedCustomWidgetTemplates(appContext),
+                statusToast = "Removed custom widget from palette."
+            )
+        }
+    }
+
     fun setDefaultButtonLogicForAllWidgets() {
         val project = _uiState.value.activeProject ?: return
+        val currentDefaultBtnLogic = _uiState.value.defaultButtonLogic
         viewModelScope.launch {
             val list = withContext(Dispatchers.IO) {
                 studioDao.getComponentsForProjectSync(project.id)
@@ -2630,18 +2758,33 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 val defaultLogic = LuaScriptEngine.defaultButtonLogicForWidget(
                     label = comp.label,
                     type = comp.type,
-                    linkUrl = comp.linkUrl
+                    linkUrl = comp.linkUrl,
+                    customDefaultButtonLogic = currentDefaultBtnLogic
                 )
                 val defaultOffLogic = LuaScriptEngine.defaultOffLogicForWidget(
                     label = comp.label,
                     type = comp.type
                 )
-                studioDao.updateComponent(
+                val customSpec = LuaCustomWidgetEngine.parseCustomWidgetSpec(comp)
+                val updatedComp = if (customSpec != null) {
+                    val newEvents = customSpec.events.mapIndexed { idx, ev ->
+                        when (idx) {
+                            0 -> ev.copy(logic = defaultLogic)
+                            1 -> ev.copy(logic = defaultOffLogic)
+                            else -> ev
+                        }
+                    }
+                    LuaCustomWidgetEngine.applySpecToComponent(
+                        comp.copy(onPayloadHex = defaultLogic, offPayloadHex = defaultOffLogic),
+                        customSpec.copy(events = newEvents)
+                    )
+                } else {
                     comp.copy(
                         onPayloadHex = defaultLogic,
                         offPayloadHex = defaultOffLogic
                     )
-                )
+                }
+                studioDao.updateComponent(updatedComp)
             }
             syncOverlayRegistryInBackground(project)
             _uiState.update {

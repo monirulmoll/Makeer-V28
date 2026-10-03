@@ -331,6 +331,12 @@ fun ComponentPropertyInspectorSheet(
     val isTextViewWidget = component.type == "TEXT"
     val isLinkOpenerWidget = component.type == "LINK" || component.type == "IMAGE"
     val isExecutableFileWidget = !isTextViewWidget && !isLinkOpenerWidget
+    val defaultBtnLogic = remember(component.id) {
+        com.example.engine.LuaCustomWidgetEngine.getDefaultButtonLogic(context)
+    }
+    var customWidgetSpec by remember(component.id, component.byteOffsetHex) {
+        mutableStateOf(com.example.engine.LuaCustomWidgetEngine.parseCustomWidgetSpec(component))
+    }
 
     fun buildUpdated(
         overrideBgHex: String = bgHex,
@@ -609,7 +615,8 @@ fun ComponentPropertyInspectorSheet(
                     }
 
                     Column(modifier = Modifier.weight(1f)) {
-                        val readableType = component.type.lowercase().replaceFirstChar { it.uppercase() }
+                        val readableType = customWidgetSpec?.displayTypeBadge()
+                            ?: component.type.lowercase().replaceFirstChar { it.uppercase() }
                         Text(
                             text = "$readableType Widget",
                             color = Color.White,
@@ -1047,7 +1054,19 @@ fun ComponentPropertyInspectorSheet(
                                 value = label,
                                 onValueChange = {
                                     label = it
-                                    onSaveComponent(buildUpdated())
+                                    val activeSpec = customWidgetSpec
+                                    if (activeSpec != null) {
+                                        val updatedSpec = activeSpec.copy(widgetName = it)
+                                        customWidgetSpec = updatedSpec
+                                        val nextComp = com.example.engine.LuaCustomWidgetEngine.applySpecToComponent(
+                                            buildUpdated(),
+                                            updatedSpec
+                                        )
+                                        byteOffset = nextComp.byteOffsetHex
+                                        onSaveComponent(nextComp)
+                                    } else {
+                                        onSaveComponent(buildUpdated())
+                                    }
                                 },
                                 placeholder = {
                                     Text(
@@ -1145,8 +1164,29 @@ fun ComponentPropertyInspectorSheet(
                             }
                         }
 
-                        // LUA SCRIPT MODE ONLY: Edit ON / OFF Logic + Set Default + Set Default For Every Button Logic (No File Replace/Copy!)
-                        if (isLuaScriptMode && !isTextViewWidget) {
+                        // LUA SCRIPT MODE: Custom Widget Dynamic Metadata-Driven Editor (Properties + Events)
+                        if (isLuaScriptMode && customWidgetSpec != null) {
+                            DynamicCustomWidgetEditorSection(
+                                component = buildUpdated(),
+                                spec = customWidgetSpec!!,
+                                defaultButtonLogic = defaultBtnLogic,
+                                onUpdateComponentWithSpec = { nextComp, nextSpec ->
+                                    customWidgetSpec = nextSpec
+                                    byteOffset = nextComp.byteOffsetHex
+                                    onPayload = nextComp.onPayloadHex
+                                    offPayload = nextComp.offPayloadHex
+                                    targetFile = nextComp.targetFilePath
+                                    currentValue = nextComp.currentValue
+                                    linkUrl = nextComp.linkUrl
+                                    onSaveComponent(nextComp)
+                                },
+                                onTriggerLive = onTriggerLive
+                            )
+                        }
+
+                        // LUA SCRIPT MODE ONLY (Standard Palette Widgets): Edit ON / OFF / Button Click Logic + Set Default
+                        if (isLuaScriptMode && customWidgetSpec == null && !isTextViewWidget) {
+                            val isStandardButton = component.type == "BUTTON"
                             Column(
                                 verticalArrangement = Arrangement.spacedBy(8.dp),
                                 modifier = Modifier
@@ -1172,7 +1212,7 @@ fun ComponentPropertyInspectorSheet(
                                             modifier = Modifier.size(16.dp)
                                         )
                                         Text(
-                                            text = "Switch / Button ON & OFF Logic",
+                                            text = if (isStandardButton) "On Button Click Logic" else "Switch / Button ON & OFF Logic",
                                             color = Color.White,
                                             fontSize = 12.sp,
                                             fontWeight = FontWeight.ExtraBold
@@ -1192,7 +1232,8 @@ fun ComponentPropertyInspectorSheet(
                                                     val defOnLogic = com.example.engine.LuaScriptEngine.defaultButtonLogicForWidget(
                                                         label = label.ifBlank { component.label },
                                                         type = component.type,
-                                                        linkUrl = linkUrl
+                                                        linkUrl = linkUrl,
+                                                        customDefaultButtonLogic = defaultBtnLogic
                                                     )
                                                     val defOffLogic = com.example.engine.LuaScriptEngine.defaultOffLogicForWidget(
                                                         label = label.ifBlank { component.label },
@@ -1222,7 +1263,8 @@ fun ComponentPropertyInspectorSheet(
                                                     val defOnLogic = com.example.engine.LuaScriptEngine.defaultButtonLogicForWidget(
                                                         label = label.ifBlank { component.label },
                                                         type = component.type,
-                                                        linkUrl = linkUrl
+                                                        linkUrl = linkUrl,
+                                                        customDefaultButtonLogic = defaultBtnLogic
                                                     )
                                                     val defOffLogic = com.example.engine.LuaScriptEngine.defaultOffLogicForWidget(
                                                         label = label.ifBlank { component.label },
@@ -1246,145 +1288,161 @@ fun ComponentPropertyInspectorSheet(
                                     }
                                 }
 
-                                Text(
-                                    text = "🟢 ON Logic (Runs when toggled OFF → ON):",
-                                    color = Color(0xFF6EE7B7),
-                                    fontSize = 10.5.sp,
-                                    fontWeight = FontWeight.Bold
-                                )
-
-                                OutlinedTextField(
-                                    value = onPayload,
-                                    onValueChange = {
-                                        onPayload = it
-                                        onSaveComponent(buildUpdated().copy(onPayloadHex = it))
-                                    },
-                                    placeholder = {
-                                        Text(
-                                            "gg.toast(\"${label.ifBlank { component.label }} ON\")",
-                                            color = InspectorPlaceholderColor,
-                                            fontSize = 11.sp
-                                        )
-                                    },
-                                    minLines = 2,
-                                    maxLines = 5,
-                                    shape = RoundedCornerShape(10.dp),
-                                    colors = OutlinedTextFieldDefaults.colors(
-                                        focusedContainerColor = InspectorFieldBg,
-                                        unfocusedContainerColor = InspectorFieldBg,
-                                        focusedBorderColor = Color(0xFF10B981),
-                                        unfocusedBorderColor = InspectorFieldBorder,
-                                        focusedTextColor = Color(0xFFE2E8F0),
-                                        unfocusedTextColor = Color(0xFFE2E8F0)
-                                    ),
-                                    textStyle = androidx.compose.ui.text.TextStyle(
-                                        fontSize = 11.5.sp,
-                                        fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
-                                    ),
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .testTag("inspector_lua_button_logic_input")
-                                )
-
-                                Text(
-                                    text = "⚪ OFF Logic (Runs when toggled ON → OFF):",
-                                    color = Color(0xFFCBD5E1),
-                                    fontSize = 10.5.sp,
-                                    fontWeight = FontWeight.Bold
-                                )
-
-                                OutlinedTextField(
-                                    value = offPayload,
-                                    onValueChange = {
-                                        offPayload = it
-                                        onSaveComponent(buildUpdated().copy(offPayloadHex = it))
-                                    },
-                                    placeholder = {
-                                        Text(
-                                            "gg.toast(\"${label.ifBlank { component.label }} OFF\")",
-                                            color = InspectorPlaceholderColor,
-                                            fontSize = 11.sp
-                                        )
-                                    },
-                                    minLines = 2,
-                                    maxLines = 5,
-                                    shape = RoundedCornerShape(10.dp),
-                                    colors = OutlinedTextFieldDefaults.colors(
-                                        focusedContainerColor = InspectorFieldBg,
-                                        unfocusedContainerColor = InspectorFieldBg,
-                                        focusedBorderColor = Color(0xFF64748B),
-                                        unfocusedBorderColor = InspectorFieldBorder,
-                                        focusedTextColor = Color(0xFFE2E8F0),
-                                        unfocusedTextColor = Color(0xFFE2E8F0)
-                                    ),
-                                    textStyle = androidx.compose.ui.text.TextStyle(
-                                        fontSize = 11.5.sp,
-                                        fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
-                                    ),
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .testTag("inspector_lua_button_off_logic_input")
-                                )
-
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Text(
-                                        text = "Variables: label, state (ON/OFF), value, text",
-                                        color = Color(0xFF64748B),
-                                        fontSize = 9.5.sp
+                                if (isStandardButton) {
+                                    WidgetDirectEditCodeBox(
+                                        title = "On Button Click Logic",
+                                        subtitle = "${label.ifBlank { component.label }} • Click Logic",
+                                        code = onPayload,
+                                        onCodeChange = {
+                                            onPayload = it
+                                            onSaveComponent(buildUpdated().copy(onPayloadHex = it))
+                                        },
+                                        placeholder = defaultBtnLogic.ifBlank { "gg.toast(\"${label.ifBlank { component.label }}\")" },
+                                        widgetName = label.ifBlank { component.label },
+                                        variablesHint = "Variables: label, state, value, text | Default: $defaultBtnLogic",
+                                        bottomActionRow = {
+                                            Surface(
+                                                shape = RoundedCornerShape(8.dp),
+                                                color = Color(0xFF059669),
+                                                modifier = Modifier
+                                                    .clickable {
+                                                        val updated = buildUpdated().copy(
+                                                            onPayloadHex = onPayload,
+                                                            offPayloadHex = offPayload,
+                                                            currentValue = "1"
+                                                        )
+                                                        onSaveComponent(updated)
+                                                        onTriggerLive(updated, onPayload)
+                                                    }
+                                                    .testTag("inspector_test_lua_button_logic")
+                                            ) {
+                                                Row(
+                                                    modifier = Modifier.padding(horizontal = 9.dp, vertical = 5.dp),
+                                                    verticalAlignment = Alignment.CenterVertically,
+                                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                                ) {
+                                                    Icon(
+                                                        imageVector = Icons.Default.PlayArrow,
+                                                        contentDescription = null,
+                                                        tint = Color.White,
+                                                        modifier = Modifier.size(12.dp)
+                                                    )
+                                                    Text(
+                                                        text = "▶ Test Click",
+                                                        color = Color.White,
+                                                        fontSize = 10.sp,
+                                                        fontWeight = FontWeight.Bold
+                                                    )
+                                                }
+                                            }
+                                        },
+                                        testTagPrefix = "inspector_lua_button_logic"
                                     )
-                                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                        Surface(
-                                            shape = RoundedCornerShape(8.dp),
-                                            color = Color(0xFF059669),
-                                            modifier = Modifier
-                                                .clickable {
-                                                    val updated = buildUpdated().copy(
-                                                        onPayloadHex = onPayload,
-                                                        offPayloadHex = offPayload,
-                                                        currentValue = "0"
+                                } else {
+                                    WidgetDirectEditCodeBox(
+                                        title = "🟢 ON Logic (Runs when toggled OFF → ON)",
+                                        subtitle = "${label.ifBlank { component.label }} • ON Logic",
+                                        code = onPayload,
+                                        onCodeChange = {
+                                            onPayload = it
+                                            onSaveComponent(buildUpdated().copy(onPayloadHex = it))
+                                        },
+                                        placeholder = "gg.toast(\"${label.ifBlank { component.label }} ON\")",
+                                        widgetName = label.ifBlank { component.label },
+                                        titleColor = Color(0xFF6EE7B7),
+                                        borderColor = Color(0xFF10B981).copy(alpha = 0.5f),
+                                        variablesHint = "Variables: label, state (ON), value, text",
+                                        bottomActionRow = {
+                                            Surface(
+                                                shape = RoundedCornerShape(8.dp),
+                                                color = Color(0xFF059669),
+                                                modifier = Modifier
+                                                    .clickable {
+                                                        val updated = buildUpdated().copy(
+                                                            onPayloadHex = onPayload,
+                                                            offPayloadHex = offPayload,
+                                                            currentValue = "0"
+                                                        )
+                                                        onSaveComponent(updated.copy(currentValue = "1"))
+                                                        onTriggerLive(updated, onPayload)
+                                                    }
+                                                    .testTag("inspector_test_lua_button_logic")
+                                            ) {
+                                                Row(
+                                                    modifier = Modifier.padding(horizontal = 9.dp, vertical = 5.dp),
+                                                    verticalAlignment = Alignment.CenterVertically,
+                                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                                ) {
+                                                    Icon(
+                                                        imageVector = Icons.Default.PlayArrow,
+                                                        contentDescription = null,
+                                                        tint = Color.White,
+                                                        modifier = Modifier.size(12.dp)
                                                     )
-                                                    onSaveComponent(updated.copy(currentValue = "1"))
-                                                    onTriggerLive(updated, onPayload)
-                                                }
-                                                .testTag("inspector_test_lua_button_logic")
-                                        ) {
-                                            Text(
-                                                text = "▶ Test ON",
-                                                color = Color.White,
-                                                fontSize = 10.sp,
-                                                fontWeight = FontWeight.Bold,
-                                                modifier = Modifier.padding(horizontal = 9.dp, vertical = 5.dp)
-                                            )
-                                        }
-                                        Surface(
-                                            shape = RoundedCornerShape(8.dp),
-                                            color = Color(0xFF334155),
-                                            border = BorderStroke(1.dp, Color(0xFF64748B)),
-                                            modifier = Modifier
-                                                .clickable {
-                                                    val updated = buildUpdated().copy(
-                                                        onPayloadHex = onPayload,
-                                                        offPayloadHex = offPayload,
-                                                        currentValue = "1"
+                                                    Text(
+                                                        text = "▶ Test ON",
+                                                        color = Color.White,
+                                                        fontSize = 10.sp,
+                                                        fontWeight = FontWeight.Bold
                                                     )
-                                                    onSaveComponent(updated.copy(currentValue = "0"))
-                                                    onTriggerLive(updated, offPayload)
                                                 }
-                                                .testTag("inspector_test_lua_button_off_logic")
-                                        ) {
-                                            Text(
-                                                text = "▶ Test OFF",
-                                                color = Color(0xFFE2E8F0),
-                                                fontSize = 10.sp,
-                                                fontWeight = FontWeight.Bold,
-                                                modifier = Modifier.padding(horizontal = 9.dp, vertical = 5.dp)
-                                            )
-                                        }
-                                    }
+                                            }
+                                        },
+                                        testTagPrefix = "inspector_lua_button_logic"
+                                    )
+
+                                    WidgetDirectEditCodeBox(
+                                        title = "⚪ OFF Logic (Runs when toggled ON → OFF)",
+                                        subtitle = "${label.ifBlank { component.label }} • OFF Logic",
+                                        code = offPayload,
+                                        onCodeChange = {
+                                            offPayload = it
+                                            onSaveComponent(buildUpdated().copy(offPayloadHex = it))
+                                        },
+                                        placeholder = "gg.toast(\"${label.ifBlank { component.label }} OFF\")",
+                                        widgetName = label.ifBlank { component.label },
+                                        titleColor = Color(0xFFCBD5E1),
+                                        borderColor = Color(0xFF64748B).copy(alpha = 0.5f),
+                                        variablesHint = "Variables: label, state (OFF), value, text",
+                                        bottomActionRow = {
+                                            Surface(
+                                                shape = RoundedCornerShape(8.dp),
+                                                color = Color(0xFF334155),
+                                                border = BorderStroke(1.dp, Color(0xFF64748B)),
+                                                modifier = Modifier
+                                                    .clickable {
+                                                        val updated = buildUpdated().copy(
+                                                            onPayloadHex = onPayload,
+                                                            offPayloadHex = offPayload,
+                                                            currentValue = "1"
+                                                        )
+                                                        onSaveComponent(updated.copy(currentValue = "0"))
+                                                        onTriggerLive(updated, offPayload)
+                                                    }
+                                                    .testTag("inspector_test_lua_button_off_logic")
+                                            ) {
+                                                Row(
+                                                    modifier = Modifier.padding(horizontal = 9.dp, vertical = 5.dp),
+                                                    verticalAlignment = Alignment.CenterVertically,
+                                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                                ) {
+                                                    Icon(
+                                                        imageVector = Icons.Default.PlayArrow,
+                                                        contentDescription = null,
+                                                        tint = Color(0xFFE2E8F0),
+                                                        modifier = Modifier.size(12.dp)
+                                                    )
+                                                    Text(
+                                                        text = "▶ Test OFF",
+                                                        color = Color(0xFFE2E8F0),
+                                                        fontSize = 10.sp,
+                                                        fontWeight = FontWeight.Bold
+                                                    )
+                                                }
+                                            }
+                                        },
+                                        testTagPrefix = "inspector_lua_button_off_logic"
+                                    )
                                 }
                             }
                         }

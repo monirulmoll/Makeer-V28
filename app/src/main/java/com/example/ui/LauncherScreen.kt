@@ -180,7 +180,8 @@ fun StudioProjectLauncherScreen(
     onImportProjectUri: (Uri) -> Unit = {},
     onRefreshPermissions: () -> Unit,
     onOpenOnlineAiMode: () -> Unit,
-    onBackToWelcome: () -> Unit = onRefreshPermissions
+    onBackToWelcome: () -> Unit = onRefreshPermissions,
+    onSaveDefaultButtonLogic: (String) -> Unit = {}
 ) {
     val editingProject = uiState.editingProject
     if (editingProject != null) {
@@ -243,7 +244,9 @@ fun StudioProjectLauncherScreen(
         onDuplicateProject = onDuplicateProject,
         onDeleteProject = onDeleteProject,
         onOpenAiStudio = onOpenOnlineAiMode,
-        onBackToWelcome = onBackToWelcome
+        onBackToWelcome = onBackToWelcome,
+        defaultButtonLogic = uiState.defaultButtonLogic,
+        onSaveDefaultButtonLogic = onSaveDefaultButtonLogic
     )
 }
 
@@ -438,6 +441,8 @@ fun LauncherScreen(
     onDeleteProject: (Long) -> Unit,
     onOpenAiStudio: () -> Unit,
     onBackToWelcome: () -> Unit,
+    defaultButtonLogic: String = com.example.engine.LuaCustomWidgetEngine.FALLBACK_DEFAULT_BUTTON_LOGIC,
+    onSaveDefaultButtonLogic: (String) -> Unit = {},
     initialSubScreen: AppStudioSubScreen = AppStudioSubScreen.HOME
 ) {
     val context = LocalContext.current
@@ -445,6 +450,16 @@ fun LauncherScreen(
     var initialCreateMode by remember { mutableStateOf("MTDP") }
     var showImportUrlDialog by remember { mutableStateOf<String?>(null) }
     var importRepoInput by remember { mutableStateOf("") }
+    var showSettingsDialog by remember { mutableStateOf(false) }
+
+    if (showSettingsDialog) {
+        DefaultButtonLogicSettingsDialog(
+            currentDefaultLogic = defaultButtonLogic,
+            onDismiss = { showSettingsDialog = false },
+            onSaveDefaultLogic = onSaveDefaultButtonLogic,
+            onOpenAiSettings = onOpenAiStudio
+        )
+    }
 
     val storagePermLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestMultiplePermissions()
@@ -567,6 +582,7 @@ fun LauncherScreen(
                             currentSubScreen = AppStudioSubScreen.CREATE_NEW_APP
                         },
                         onOpenAiMode = onOpenAiStudio,
+                        onOpenSettings = { showSettingsDialog = true },
                         onOpenSavedProjects = { currentSubScreen = AppStudioSubScreen.SAVED_PROJECTS },
                         onOpenImportProject = { currentSubScreen = AppStudioSubScreen.IMPORT_PROJECT },
                         onOpenTemplates = { currentSubScreen = AppStudioSubScreen.TEMPLATES },
@@ -687,6 +703,7 @@ private fun AppStudioHomeScreenContent(
     onOpenCreateNewHub: () -> Unit,
     onOpenCreateNewAppForm: () -> Unit,
     onOpenAiMode: () -> Unit,
+    onOpenSettings: () -> Unit = {},
     onOpenSavedProjects: () -> Unit,
     onOpenImportProject: () -> Unit,
     onOpenTemplates: () -> Unit,
@@ -749,10 +766,13 @@ private fun AppStudioHomeScreenContent(
                             tint = Color(0xFFCBD5E1)
                         )
                     }
-                    IconButton(onClick = onOpenCreateNewHub) {
+                    IconButton(
+                        onClick = onOpenSettings,
+                        modifier = Modifier.testTag("home_top_settings_button")
+                    ) {
                         Icon(
-                            imageVector = Icons.Default.NotificationsNone,
-                            contentDescription = "Notifications",
+                            imageVector = Icons.Default.Settings,
+                            contentDescription = "Settings",
                             tint = Color(0xFFCBD5E1)
                         )
                     }
@@ -1029,6 +1049,12 @@ private fun AppStudioHomeScreenContent(
                     QuickActionPill(
                         icon = Icons.Default.Settings,
                         label = "Settings",
+                        onClick = onOpenSettings,
+                        testTag = "home_quick_action_settings_button"
+                    )
+                    QuickActionPill(
+                        icon = Icons.Default.AutoAwesome,
+                        label = "AI Studio",
                         onClick = onOpenAiMode,
                         testTag = "welcome_select_online_ai_mode_button"
                     )

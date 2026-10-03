@@ -286,6 +286,9 @@ fun SketchwareStudioSplitWorkspace(
     onSaveDesign: () -> Unit,
     onTriggerComponentLive: (CanvasComponentEntity, String?) -> Unit,
     onClearCanvas: () -> Unit,
+    savedCustomWidgets: List<com.example.engine.LuaCustomWidgetSpec> = emptyList(),
+    onOpenCreateCustomWidget: () -> Unit = {},
+    onAddSavedCustomWidget: (com.example.engine.LuaCustomWidgetSpec) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val screen1Components = remember(components) {
@@ -308,7 +311,10 @@ fun SketchwareStudioSplitWorkspace(
                 activePreviewScreen = activePreviewScreen,
                 isLuaScriptMode = isLuaScriptMode,
                 isAutoFixSize = project.autoFixSize,
+                savedCustomWidgets = savedCustomWidgets,
                 onSelectPaletteEntry = onAddPaletteEntry,
+                onOpenCreateCustomWidget = onOpenCreateCustomWidget,
+                onAddSavedCustomWidget = onAddSavedCustomWidget,
                 onToggleAutoFixSize = onToggleAutoFixSize
             )
         }
@@ -391,7 +397,10 @@ private fun LeftSideWidgetPalette(
     activePreviewScreen: Int = 2,
     isLuaScriptMode: Boolean = false,
     isAutoFixSize: Boolean,
+    savedCustomWidgets: List<com.example.engine.LuaCustomWidgetSpec> = emptyList(),
     onSelectPaletteEntry: (SketchwarePaletteEntry) -> Unit,
+    onOpenCreateCustomWidget: () -> Unit = {},
+    onAddSavedCustomWidget: (com.example.engine.LuaCustomWidgetSpec) -> Unit = {},
     onToggleAutoFixSize: () -> Unit
 ) {
     val luaChoiceItems = remember {
@@ -401,6 +410,12 @@ private fun LeftSideWidgetPalette(
                 icon = Icons.Default.ToggleOn,
                 iconTint = Color(0xFF10B981),
                 tagSlug = "lua_switch"
+            ),
+            LeftPaletteItemSpec(
+                entry = SketchwarePaletteEntry("Button", ComponentWidgetType.BUTTON, 196, 42),
+                icon = Icons.Default.SmartButton,
+                iconTint = Color(0xFFFB923C),
+                tagSlug = "lua_button"
             ),
             LeftPaletteItemSpec(
                 entry = SketchwarePaletteEntry("🟢  START", ComponentWidgetType.BUTTON, 196, 42),
@@ -552,6 +567,79 @@ private fun LeftSideWidgetPalette(
                         item = item,
                         onClick = { onSelectPaletteEntry(item.entry) }
                     )
+                }
+
+                if (isLuaScriptMode) {
+                    if (savedCustomWidgets.isNotEmpty()) {
+                        Spacer(Modifier.height(4.dp))
+                        PaletteCategoryHeader("Custom Widgets", Color(0xFF38BDF8))
+                        savedCustomWidgets.forEach { spec ->
+                            Surface(
+                                shape = RoundedCornerShape(10.dp),
+                                color = Color(0xFF13203B),
+                                border = BorderStroke(1.dp, Color(0xFF38BDF8).copy(alpha = 0.5f)),
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable { onAddSavedCustomWidget(spec) }
+                                    .testTag("palette_custom_widget_${spec.widgetId}")
+                            ) {
+                                Column(
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
+                                    verticalArrangement = Arrangement.spacedBy(2.dp)
+                                ) {
+                                    Text(
+                                        text = spec.widgetName,
+                                        color = Color.White,
+                                        fontSize = 10.5.sp,
+                                        fontWeight = FontWeight.Bold,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                    Text(
+                                        text = "[${spec.widgetType}]",
+                                        color = Color(0xFF38BDF8),
+                                        fontSize = 9.sp,
+                                        fontFamily = FontFamily.Monospace,
+                                        maxLines = 1
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    Spacer(Modifier.height(6.dp))
+                    // Always show [ + Create New Widget ] at the bottom of the widget list in Lua Script mode
+                    Surface(
+                        shape = RoundedCornerShape(10.dp),
+                        color = Color(0xFF064E3B),
+                        border = BorderStroke(1.5.dp, Color(0xFF10B981)),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onOpenCreateCustomWidget() }
+                            .testTag("lua_create_new_widget_button")
+                    ) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 8.dp, vertical = 9.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(2.dp)
+                        ) {
+                            Text(
+                                text = "+ Create New Widget",
+                                color = Color(0xFF6EE7B7),
+                                fontSize = 10.5.sp,
+                                fontWeight = FontWeight.ExtraBold,
+                                textAlign = TextAlign.Center
+                            )
+                            Text(
+                                text = "From Custom Code",
+                                color = Color(0xFFA7F3D0),
+                                fontSize = 8.5.sp,
+                                textAlign = TextAlign.Center
+                            )
+                        }
+                    }
                 }
             }
 
@@ -2227,15 +2315,22 @@ fun LuaChoiceMenuPreviewCanvas(
 
                                     components.forEachIndexed { index, comp ->
                                         val isSelectedForInspector = comp.id == selectedComponentId
-                                        val isTextOnly = comp.type == ComponentWidgetType.TEXT.name
+                                        val customSpec = com.example.engine.LuaCustomWidgetEngine.parseCustomWidgetSpec(comp)
+                                        val isTextOnly = comp.type == ComponentWidgetType.TEXT.name || customSpec?.widgetType == "text_view"
+                                        val isCustomNonToggle = customSpec != null &&
+                                            customSpec.widgetType !in setOf("toggle", "switch")
                                         val isWidgetOn = widgetStates[comp.id]
                                             ?: (comp.currentValue == "1" || comp.currentValue.equals("true", ignoreCase = true))
 
                                         val toggleWidgetState = {
                                             if (!isTextOnly) {
-                                                val nextState = !isWidgetOn
-                                                widgetStates[comp.id] = nextState
-                                                onTriggerComponent(comp.copy(currentValue = if (isWidgetOn) "1" else "0"))
+                                                if (isCustomNonToggle) {
+                                                    onTriggerComponent(comp)
+                                                } else {
+                                                    val nextState = !isWidgetOn
+                                                    widgetStates[comp.id] = nextState
+                                                    onTriggerComponent(comp.copy(currentValue = if (isWidgetOn) "1" else "0"))
+                                                }
                                             }
                                             if (!isLivePreviewMode) {
                                                 onSelectComponent(comp.id)
@@ -2247,7 +2342,7 @@ fun LuaChoiceMenuPreviewCanvas(
                                                 .fillMaxWidth()
                                                 .background(
                                                     when {
-                                                        isWidgetOn && !isTextOnly -> Color(0xFF064E3B).copy(alpha = 0.28f)
+                                                        isWidgetOn && !isTextOnly && !isCustomNonToggle -> Color(0xFF064E3B).copy(alpha = 0.28f)
                                                         isSelectedForInspector -> Color(0xFF1E3A8A).copy(alpha = 0.35f)
                                                         else -> Color.Transparent
                                                     }
@@ -2259,30 +2354,59 @@ fun LuaChoiceMenuPreviewCanvas(
                                             horizontalArrangement = Arrangement.spacedBy(10.dp)
                                         ) {
                                             if (!isTextOnly) {
-                                                // Clear Visual ON/OFF State Pill: [ 🟢 ON ] or [ ⚪ OFF ]
-                                                Surface(
-                                                    shape = RoundedCornerShape(6.dp),
-                                                    color = if (isWidgetOn) Color(0xFF065F46) else Color(0xFF1F2937),
-                                                    border = BorderStroke(
-                                                        1.dp,
-                                                        if (isWidgetOn) Color(0xFF10B981) else Color(0xFF4B5563)
-                                                    ),
-                                                    modifier = Modifier
-                                                        .clickable { toggleWidgetState() }
-                                                        .testTag("lua_switch_indicator_${comp.id}")
-                                                ) {
-                                                    Row(
-                                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                                                        verticalAlignment = Alignment.CenterVertically,
-                                                        horizontalArrangement = Arrangement.spacedBy(5.dp)
+                                                if (isCustomNonToggle && customSpec != null) {
+                                                    // Custom Widget Type Indicator Pill (Button, Path Input, Text Input, Slider, Select)
+                                                    Surface(
+                                                        shape = RoundedCornerShape(6.dp),
+                                                        color = Color(0xFF1E3A8A).copy(alpha = 0.55f),
+                                                        border = BorderStroke(1.dp, Color(0xFF38BDF8)),
+                                                        modifier = Modifier
+                                                            .clickable { toggleWidgetState() }
+                                                            .testTag("lua_custom_indicator_${comp.id}")
                                                     ) {
                                                         Text(
-                                                            text = if (isWidgetOn) "🟢 ON" else "⚪ OFF",
-                                                            color = if (isWidgetOn) Color(0xFF6EE7B7) else Color(0xFF9CA3AF),
-                                                            fontSize = 10.5.sp,
+                                                            text = when (customSpec.widgetType) {
+                                                                "button" -> "▶ BTN"
+                                                                "path_input" -> "📁 PATH"
+                                                                "text_input" -> "✏️ TEXT"
+                                                                "number_input" -> "🔢 NUM"
+                                                                "slider" -> "🎚️ SLIDER"
+                                                                "select" -> "▾ SELECT"
+                                                                else -> "⚡ CUSTOM"
+                                                            },
+                                                            color = Color(0xFFBAE6FD),
+                                                            fontSize = 10.sp,
                                                             fontWeight = FontWeight.ExtraBold,
-                                                            fontFamily = FontFamily.Monospace
+                                                            fontFamily = FontFamily.Monospace,
+                                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
                                                         )
+                                                    }
+                                                } else {
+                                                    // Clear Visual ON/OFF State Pill: [ 🟢 ON ] or [ ⚪ OFF ]
+                                                    Surface(
+                                                        shape = RoundedCornerShape(6.dp),
+                                                        color = if (isWidgetOn) Color(0xFF065F46) else Color(0xFF1F2937),
+                                                        border = BorderStroke(
+                                                            1.dp,
+                                                            if (isWidgetOn) Color(0xFF10B981) else Color(0xFF4B5563)
+                                                        ),
+                                                        modifier = Modifier
+                                                            .clickable { toggleWidgetState() }
+                                                            .testTag("lua_switch_indicator_${comp.id}")
+                                                    ) {
+                                                        Row(
+                                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                                            verticalAlignment = Alignment.CenterVertically,
+                                                            horizontalArrangement = Arrangement.spacedBy(5.dp)
+                                                        ) {
+                                                            Text(
+                                                                text = if (isWidgetOn) "🟢 ON" else "⚪ OFF",
+                                                                color = if (isWidgetOn) Color(0xFF6EE7B7) else Color(0xFF9CA3AF),
+                                                                fontSize = 10.5.sp,
+                                                                fontWeight = FontWeight.ExtraBold,
+                                                                fontFamily = FontFamily.Monospace
+                                                            )
+                                                        }
                                                     }
                                                 }
                                             }
@@ -2290,24 +2414,27 @@ fun LuaChoiceMenuPreviewCanvas(
                                             Column(modifier = Modifier.weight(1f)) {
                                                 Text(
                                                     text = comp.label,
-                                                    color = if (isWidgetOn && !isTextOnly) Color(0xFFECFDF5) else Color.White,
+                                                    color = if (isWidgetOn && !isTextOnly && !isCustomNonToggle) Color(0xFFECFDF5) else Color.White,
                                                     fontSize = 13.sp,
                                                     fontWeight = FontWeight.SemiBold,
                                                     maxLines = 1,
                                                     overflow = TextOverflow.Ellipsis
                                                 )
-                                                val activeLogicPreview = if (isWidgetOn || isTextOnly) {
+                                                val activeLogicPreview = if (isWidgetOn || isTextOnly || isCustomNonToggle) {
                                                     LuaScriptEngine.resolveWidgetButtonLogic(comp).lines().firstOrNull().orEmpty()
                                                 } else {
                                                     LuaScriptEngine.resolveWidgetOffLogic(comp).lines().firstOrNull().orEmpty()
                                                 }
+                                                val customPropSummary = customSpec?.properties?.firstOrNull()?.let { p ->
+                                                    "${p.key} = ${p.value}  •  "
+                                                }.orEmpty()
                                                 Text(
-                                                    text = if (isTextOnly) {
-                                                        "Text View  •  ${comp.label}"
-                                                    } else {
-                                                        "switch_${index + 1}.state = ${if (isWidgetOn) "true" else "false"}  •  $activeLogicPreview"
+                                                    text = when {
+                                                        isTextOnly -> "Text View  •  ${comp.label}"
+                                                        isCustomNonToggle -> "${customPropSummary}$activeLogicPreview"
+                                                        else -> "switch_${index + 1}.state = ${if (isWidgetOn) "true" else "false"}  •  $activeLogicPreview"
                                                     },
-                                                    color = if (isWidgetOn && !isTextOnly) Color(0xFF6EE7B7) else Color(0xFF9CA3AF),
+                                                    color = if (isWidgetOn && !isTextOnly && !isCustomNonToggle) Color(0xFF6EE7B7) else Color(0xFF9CA3AF),
                                                     fontSize = 9.5.sp,
                                                     fontFamily = FontFamily.Monospace,
                                                     maxLines = 1,
@@ -2315,7 +2442,7 @@ fun LuaChoiceMenuPreviewCanvas(
                                                 )
                                             }
 
-                                            if (!isTextOnly) {
+                                            if (!isTextOnly && !isCustomNonToggle) {
                                                 // Visual Toggle Switch Pill on the right (independent per-widget ON/OFF)
                                                 Surface(
                                                     shape = RoundedCornerShape(99.dp),

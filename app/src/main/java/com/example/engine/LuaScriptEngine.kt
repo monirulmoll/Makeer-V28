@@ -96,8 +96,22 @@ object LuaScriptEngine {
         return slice.joinToString("\n") { it.trim() }.trim().takeIf { it.isNotEmpty() }
     }
 
-    fun defaultButtonLogicForWidget(label: String, type: String, linkUrl: String = ""): String {
+    fun defaultButtonLogicForWidget(
+        label: String,
+        type: String,
+        linkUrl: String = "",
+        customDefaultButtonLogic: String? = null
+    ): String {
         val cleanToastText = stripLeadingEmojiForToast(label).replace("\"", "\\\"")
+        if (type == ComponentWidgetType.TOGGLE.name) {
+            return "gg.toast(\"$cleanToastText: ON\")"
+        }
+        if (!customDefaultButtonLogic.isNullOrBlank()) {
+            return normalizeGameGuardianLuaCode(customDefaultButtonLogic.trim())
+        }
+        if (type == ComponentWidgetType.BUTTON.name) {
+            return LuaCustomWidgetEngine.FALLBACK_DEFAULT_BUTTON_LOGIC
+        }
         return "gg.toast(\"$cleanToastText: ON\")"
     }
 
@@ -107,6 +121,13 @@ object LuaScriptEngine {
     }
 
     fun resolveWidgetButtonLogic(component: CanvasComponentEntity): String {
+        val customSpec = LuaCustomWidgetEngine.parseCustomWidgetSpec(component)
+        if (customSpec != null) {
+            val evLogic = customSpec.primaryEventLogic().trim()
+            if (evLogic.isNotEmpty()) {
+                return normalizeGameGuardianLuaCode(evLogic)
+            }
+        }
         val raw = component.onPayloadHex.trim()
         val isLegacyPlaceholder = raw.isEmpty() ||
             raw.equals("On", ignoreCase = true) ||
@@ -122,6 +143,13 @@ object LuaScriptEngine {
     }
 
     fun resolveWidgetOffLogic(component: CanvasComponentEntity): String {
+        val customSpec = LuaCustomWidgetEngine.parseCustomWidgetSpec(component)
+        if (customSpec != null && customSpec.widgetType.equals("toggle", ignoreCase = true)) {
+            val evOffLogic = customSpec.secondaryEventLogic().trim()
+            if (evOffLogic.isNotEmpty()) {
+                return normalizeGameGuardianLuaCode(evOffLogic)
+            }
+        }
         val rawOff = component.offPayloadHex.trim()
         val isLegacyOff = rawOff.isEmpty() ||
             rawOff.equals("Off", ignoreCase = true) ||
@@ -156,8 +184,24 @@ object LuaScriptEngine {
             if (luaWidgets.isNotEmpty()) {
                 appendLine()
                 luaWidgets.forEachIndexed { index, comp ->
+                    val customSpec = LuaCustomWidgetEngine.parseCustomWidgetSpec(comp)
                     val initOn = comp.currentValue == "1" || comp.currentValue.equals("true", ignoreCase = true)
-                    appendLine("local switch_${index + 1} = { state = ${if (initOn) "true" else "false"} }")
+                    if (customSpec != null && customSpec.properties.isNotEmpty()) {
+                        val propEntries = mutableListOf("state = ${if (initOn) "true" else "false"}")
+                        propEntries.add("type = \"${escapeLuaString(customSpec.widgetType)}\"")
+                        customSpec.properties.forEach { prop ->
+                            val safeKey = prop.key.replace(Regex("[^A-Za-z0-9_]"), "_").ifEmpty { "value" }
+                            val luaLiteral = when (prop.type) {
+                                "boolean" -> if (prop.value.equals("true", ignoreCase = true) || prop.value == "1") "true" else "false"
+                                "number", "slider" -> prop.value.toDoubleOrNull()?.toString() ?: "0"
+                                else -> "\"${escapeLuaString(prop.value)}\""
+                            }
+                            propEntries.add("$safeKey = $luaLiteral")
+                        }
+                        appendLine("local switch_${index + 1} = { ${propEntries.joinToString(", ")} }")
+                    } else {
+                        appendLine("local switch_${index + 1} = { state = ${if (initOn) "true" else "false"} }")
+                    }
                 }
             }
             appendLine()
@@ -165,9 +209,16 @@ object LuaScriptEngine {
             appendLine("    while running do")
             appendLine("        local c = gg.choice({")
             luaWidgets.forEachIndexed { index, comp ->
+                val customSpec = LuaCustomWidgetEngine.parseCustomWidgetSpec(comp)
                 val escapedLabel = escapeLuaString(comp.label)
-                if (comp.type == ComponentWidgetType.TEXT.name) {
+                if (comp.type == ComponentWidgetType.TEXT.name || customSpec?.widgetType == "text_view") {
                     appendLine("            \"$escapedLabel\",")
+                } else if (customSpec != null && customSpec.widgetType in setOf("path_input", "text_input", "number_input", "slider", "select")) {
+                    val primaryProp = customSpec.properties.firstOrNull()
+                    val propKey = primaryProp?.key?.replace(Regex("[^A-Za-z0-9_]"), "_") ?: "value"
+                    appendLine("            \"$escapedLabel [\" .. tostring(switch_${index + 1}.$propKey) .. \"]\",")
+                } else if (customSpec != null && customSpec.widgetType in setOf("button", "link")) {
+                    appendLine("            \"[ ▶ ]  $escapedLabel\",")
                 } else {
                     appendLine("            (switch_${index + 1}.state and \"[ 🟢 ON ]  \" or \"[ ⚪ OFF ] \") .. \"$escapedLabel\",")
                 }
@@ -179,8 +230,40 @@ object LuaScriptEngine {
             appendLine("            break")
             luaWidgets.forEachIndexed { index, comp ->
                 val choiceIdx = index + 1
+                val customSpec = LuaCustomWidgetEngine.parseCustomWidgetSpec(comp)
                 appendLine("        elseif c == $choiceIdx then")
-                if (comp.type == ComponentWidgetType.TEXT.name) {
+                if (customSpec != null) {
+                    // Bind custom widget properties as local variables for event logic
+                    customSpec.properties.forEach { prop ->
+                        val safeKey = prop.key.replace(Regex("[^A-Za-z0-9_]"), "_").ifEmpty { "value" }
+                        appendLine("            local $safeKey = switch_$choiceIdx.$safeKey")
+                    }
+                }
+                if (comp.type == ComponentWidgetType.TEXT.name || customSpec?.widgetType == "text_view") {
+                    val logicLines = resolveWidgetButtonLogic(comp).lines()
+                    logicLines.forEach { line ->
+                        appendLine("            $line")
+                    }
+                } else if (customSpec != null && customSpec.widgetType in setOf("path_input", "text_input", "number_input", "slider")) {
+                    val primaryProp = customSpec.properties.firstOrNull()
+                    val propKey = primaryProp?.key?.replace(Regex("[^A-Za-z0-9_]"), "_") ?: "value"
+                    val promptTitle = escapeLuaString(primaryProp?.label ?: comp.label)
+                    val promptKind = when (customSpec.widgetType) {
+                        "path_input" -> "file"
+                        "number_input", "slider" -> "number"
+                        else -> "text"
+                    }
+                    appendLine("            local input = gg.prompt({\"$promptTitle\"}, {switch_$choiceIdx.$propKey}, {\"$promptKind\"})")
+                    appendLine("            if input ~= nil and input[1] ~= nil then")
+                    appendLine("                switch_$choiceIdx.$propKey = input[1]")
+                    appendLine("                $propKey = input[1]")
+                    appendLine("                local value = input[1]")
+                    val logicLines = resolveWidgetButtonLogic(comp).lines()
+                    logicLines.forEach { line ->
+                        appendLine("                $line")
+                    }
+                    appendLine("            end")
+                } else if (customSpec != null && customSpec.widgetType in setOf("button", "link", "select")) {
                     val logicLines = resolveWidgetButtonLogic(comp).lines()
                     logicLines.forEach { line ->
                         appendLine("            $line")
@@ -281,9 +364,13 @@ object LuaScriptEngine {
         value: Int,
         text: String
     ): LuaExecutionResult {
-        val isSwitchOrButton = component.type == ComponentWidgetType.TOGGLE.name ||
-            component.type == ComponentWidgetType.BUTTON.name
-        val logic = if (isSwitchOrButton && !state) {
+        val customSpec = LuaCustomWidgetEngine.parseCustomWidgetSpec(component)
+        val isToggleWidget = if (customSpec != null) {
+            customSpec.widgetType.equals("toggle", ignoreCase = true) || customSpec.widgetType.equals("switch", ignoreCase = true)
+        } else {
+            component.type == ComponentWidgetType.TOGGLE.name || component.type == ComponentWidgetType.BUTTON.name
+        }
+        val logic = if (isToggleWidget && !state) {
             resolveWidgetOffLogic(component)
         } else {
             resolveWidgetButtonLogic(component)
@@ -299,8 +386,17 @@ object LuaScriptEngine {
             "state" to state,
             "value" to value,
             "text" to text,
+            "path" to component.targetFilePath.ifBlank { text },
             "url" to component.linkUrl.ifBlank { "https://google.com" }
         )
+        customSpec?.properties?.forEach { prop ->
+            val typedVal: Any = when (prop.type) {
+                "boolean" -> prop.value.equals("true", ignoreCase = true) || prop.value == "1"
+                "number", "slider" -> prop.value.toIntOrNull() ?: prop.value.toDoubleOrNull() ?: 0
+                else -> prop.value
+            }
+            env[prop.key] = typedVal
+        }
 
         val lines = logic.lines().map { it.trim() }
         var i = 0
