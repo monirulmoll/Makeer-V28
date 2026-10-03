@@ -124,7 +124,8 @@ enum class AppStudioSubScreen {
     CREATE_NEW_APP,
     IMPORT_PROJECT,
     SAVED_PROJECTS,
-    TEMPLATES
+    TEMPLATES,
+    SETTINGS
 }
 
 private val StudioDarkBg = Color(0xFF090D18)
@@ -181,7 +182,8 @@ fun StudioProjectLauncherScreen(
     onRefreshPermissions: () -> Unit,
     onOpenOnlineAiMode: () -> Unit,
     onBackToWelcome: () -> Unit = onRefreshPermissions,
-    onSaveDefaultButtonLogic: (String) -> Unit = {}
+    onSaveDefaultButtonLogic: (String) -> Unit = {},
+    onSaveLuaPreExecutionCode: (String) -> Unit = {}
 ) {
     val editingProject = uiState.editingProject
     if (editingProject != null) {
@@ -246,7 +248,9 @@ fun StudioProjectLauncherScreen(
         onOpenAiStudio = onOpenOnlineAiMode,
         onBackToWelcome = onBackToWelcome,
         defaultButtonLogic = uiState.defaultButtonLogic,
-        onSaveDefaultButtonLogic = onSaveDefaultButtonLogic
+        onSaveDefaultButtonLogic = onSaveDefaultButtonLogic,
+        luaPreExecutionCode = uiState.luaPreExecutionCode,
+        onSaveLuaPreExecutionCode = onSaveLuaPreExecutionCode
     )
 }
 
@@ -443,6 +447,8 @@ fun LauncherScreen(
     onBackToWelcome: () -> Unit,
     defaultButtonLogic: String = com.example.engine.LuaCustomWidgetEngine.FALLBACK_DEFAULT_BUTTON_LOGIC,
     onSaveDefaultButtonLogic: (String) -> Unit = {},
+    luaPreExecutionCode: String = "",
+    onSaveLuaPreExecutionCode: (String) -> Unit = {},
     initialSubScreen: AppStudioSubScreen = AppStudioSubScreen.HOME
 ) {
     val context = LocalContext.current
@@ -450,16 +456,6 @@ fun LauncherScreen(
     var initialCreateMode by remember { mutableStateOf("MTDP") }
     var showImportUrlDialog by remember { mutableStateOf<String?>(null) }
     var importRepoInput by remember { mutableStateOf("") }
-    var showSettingsDialog by remember { mutableStateOf(false) }
-
-    if (showSettingsDialog) {
-        DefaultButtonLogicSettingsDialog(
-            currentDefaultLogic = defaultButtonLogic,
-            onDismiss = { showSettingsDialog = false },
-            onSaveDefaultLogic = onSaveDefaultButtonLogic,
-            onOpenAiSettings = onOpenAiStudio
-        )
-    }
 
     val storagePermLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.RequestMultiplePermissions()
@@ -582,7 +578,7 @@ fun LauncherScreen(
                             currentSubScreen = AppStudioSubScreen.CREATE_NEW_APP
                         },
                         onOpenAiMode = onOpenAiStudio,
-                        onOpenSettings = { showSettingsDialog = true },
+                        onOpenSettings = { currentSubScreen = AppStudioSubScreen.SETTINGS },
                         onOpenSavedProjects = { currentSubScreen = AppStudioSubScreen.SAVED_PROJECTS },
                         onOpenImportProject = { currentSubScreen = AppStudioSubScreen.IMPORT_PROJECT },
                         onOpenTemplates = { currentSubScreen = AppStudioSubScreen.TEMPLATES },
@@ -685,6 +681,20 @@ fun LauncherScreen(
                         onUseTemplate = { name, pkg, panelTitle ->
                             onCreateProjectWithLogo(name, pkg, panelTitle, "")
                         }
+                    )
+                }
+
+                AppStudioSubScreen.SETTINGS -> {
+                    StudioSettingsScreenContent(
+                        defaultButtonLogic = defaultButtonLogic,
+                        onSaveDefaultButtonLogic = onSaveDefaultButtonLogic,
+                        luaPreExecutionCode = luaPreExecutionCode,
+                        onSaveLuaPreExecutionCode = onSaveLuaPreExecutionCode,
+                        hasStoragePermission = hasStoragePermission,
+                        hasOverlayPermission = hasOverlayPermission,
+                        onRefreshPermissions = onRefreshPermissions,
+                        onOpenAiStudio = onOpenAiStudio,
+                        onClose = { currentSubScreen = AppStudioSubScreen.HOME }
                     )
                 }
             }

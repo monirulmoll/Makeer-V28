@@ -169,7 +169,8 @@ object LuaScriptEngine {
 
     fun generateLuaScript(
         project: StudioProjectEntity,
-        components: List<CanvasComponentEntity>
+        components: List<CanvasComponentEntity>,
+        preExecutionCode: String? = null
     ): String {
         val luaWidgets = components.filter { !isScreen1WidgetType(it.type) }
         val rawTitle = project.overlayTitle.ifBlank { project.name.ifBlank { "PC PANEL" } }
@@ -177,6 +178,14 @@ object LuaScriptEngine {
         val exitIdx = luaWidgets.size + 1
 
         val generated = buildString {
+            val cleanPreCode = preExecutionCode?.trim().orEmpty()
+            if (cleanPreCode.isNotEmpty()) {
+                appendLine("-- =======================================================")
+                appendLine("-- Lua Script Pre-Execution Code (Runs First Before Script)")
+                appendLine("-- =======================================================")
+                appendLine(normalizeGameGuardianLuaCode(cleanPreCode))
+                appendLine()
+            }
             appendLine("gg.setVisible(false)")
             appendLine("gg.showUiButton()")
             appendLine()
@@ -636,11 +645,13 @@ object LuaScriptEngine {
         context: Context,
         project: StudioProjectEntity,
         components: List<CanvasComponentEntity>,
-        customScriptOverride: String? = null
+        customScriptOverride: String? = null,
+        preExecutionCode: String? = null
     ): LuaSaveResult {
         val fileName = scriptFileNameForProject(project)
+        val preCode = preExecutionCode ?: LuaCustomWidgetEngine.getLuaPreExecutionCode(context)
         val rawScriptContent = customScriptOverride?.takeIf { it.isNotBlank() }
-            ?: generateLuaScript(project, components)
+            ?: generateLuaScript(project, components, preCode)
         val scriptContent = normalizeGameGuardianLuaCode(rawScriptContent)
         val scriptBytes = scriptContent.toByteArray(Charsets.UTF_8)
 

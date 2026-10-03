@@ -74,8 +74,22 @@ object LuaCustomWidgetEngine {
     private const val PREFS_NAME = "lua_script_studio_prefs"
     private const val KEY_DEFAULT_BUTTON_LOGIC = "lua_default_button_logic"
     private const val KEY_CUSTOM_WIDGET_TEMPLATES = "lua_custom_widget_templates_v1"
+    private const val KEY_LUA_PRE_EXECUTION_CODE = "lua_pre_execution_code"
 
     const val FALLBACK_DEFAULT_BUTTON_LOGIC = "gg.toast(\"Button clicked\")"
+
+    fun getLuaPreExecutionCode(context: Context): String {
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val raw = prefs.getString(KEY_LUA_PRE_EXECUTION_CODE, null)
+        return if (raw.isNullOrBlank()) "" else LuaScriptEngine.normalizeGameGuardianLuaCode(raw.trim())
+    }
+
+    fun setLuaPreExecutionCode(context: Context, code: String) {
+        val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val trimmed = code.trim()
+        val normalized = if (trimmed.isEmpty()) "" else LuaScriptEngine.normalizeGameGuardianLuaCode(trimmed)
+        prefs.edit().putString(KEY_LUA_PRE_EXECUTION_CODE, normalized).apply()
+    }
 
     fun getDefaultButtonLogic(context: Context): String {
         val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)

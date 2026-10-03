@@ -183,7 +183,8 @@ class MainActivity : ComponentActivity() {
                             onRefreshPermissions = viewModel::refreshOverlayPermission,
                             onOpenOnlineAiMode = viewModel::openOnlineAiMode,
                             onBackToWelcome = viewModel::navigateBackToWelcome,
-                            onSaveDefaultButtonLogic = viewModel::saveDefaultButtonLogic
+                            onSaveDefaultButtonLogic = viewModel::saveDefaultButtonLogic,
+                            onSaveLuaPreExecutionCode = viewModel::saveLuaPreExecutionCode
                         )
                     }
 

@@ -125,6 +125,7 @@ data class StudioUiState(
     val showCreateCustomWidgetScreen: Boolean = false,
     val savedCustomWidgets: List<LuaCustomWidgetSpec> = emptyList(),
     val defaultButtonLogic: String = LuaCustomWidgetEngine.FALLBACK_DEFAULT_BUTTON_LOGIC,
+    val luaPreExecutionCode: String = "",
     val statusToast: String = "Welcome to Studio Error — Choose Offline Mode or Online (AI) Mode."
 )
 
@@ -170,7 +171,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             ),
             termuxServerConfig = TermuxServerClient.loadConfig(appContext),
             savedCustomWidgets = LuaCustomWidgetEngine.getSavedCustomWidgetTemplates(appContext),
-            defaultButtonLogic = LuaCustomWidgetEngine.getDefaultButtonLogic(appContext)
+            defaultButtonLogic = LuaCustomWidgetEngine.getDefaultButtonLogic(appContext),
+            luaPreExecutionCode = LuaCustomWidgetEngine.getLuaPreExecutionCode(appContext)
         )
     )
     val uiState: StateFlow<StudioUiState> = _uiState.asStateFlow()
@@ -2604,7 +2606,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     }
                 }
                 val saveResult = withContext(Dispatchers.IO) {
-                    LuaScriptEngine.saveLuaScriptToDownloads(appContext, project, components)
+                    LuaScriptEngine.saveLuaScriptToDownloads(
+                        context = appContext,
+                        project = project,
+                        components = components,
+                        preExecutionCode = _uiState.value.luaPreExecutionCode
+                    )
                 }
                 val sizeKb = String.format(Locale.US, "%.1f KB", (saveResult.sizeBytes / 1024.0).coerceAtLeast(0.1))
                 _uiState.update {
@@ -2642,6 +2649,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             it.copy(
                 defaultButtonLogic = saved,
                 statusToast = "✅ Default Button Logic saved: $saved"
+            )
+        }
+    }
+
+    fun saveLuaPreExecutionCode(rawCode: String) {
+        LuaCustomWidgetEngine.setLuaPreExecutionCode(appContext, rawCode)
+        val saved = LuaCustomWidgetEngine.getLuaPreExecutionCode(appContext)
+        _uiState.update {
+            it.copy(
+                luaPreExecutionCode = saved,
+                statusToast = if (saved.isNotBlank()) "✅ Pre-Execution Lua Code saved" else "✅ Pre-Execution Lua Code cleared (blank)"
             )
         }
     }
